@@ -176,6 +176,12 @@ def test_resume_latest_by_cwd(home):
     assert got.id == s3.id
     assert [m["content"][0]["text"] for m in got.messages] == ["two", "three"]
 
+    # host always emits session.start after open_session, attributed to the resumed id
+    bus.emit("session.start", cwd=str(a), model="m", pid="1", repository="", branch="")
+    got = open_session(a, {}, True)
+    assert got.id == s3.id
+    assert [m["content"][0]["text"] for m in got.messages] == ["two", "three"]
+
     agent = agent_for(bus, a, got)
     api.commands["/fork"](agent, "1")
     fork_id = agent.session.id
@@ -295,6 +301,31 @@ def test_first_event_invariant(home):
     assert query(
         "SELECT type FROM events WHERE session = ? ORDER BY seq LIMIT 1", (fork_id,),
     )[0][0] == "session.fork"
+
+
+def test_malformed_message_skipped_both_paths(home):
+    cwd = home / "proj"
+    cwd.mkdir()
+    bus, api, agent = boot(cwd)
+    bus.emit("message.user", message=msg("good-before"))
+    bus.emit("message.user")  # plugin payload missing `message`
+    bus.emit("message.user", message=msg("good-after"))
+
+    assert [m["content"][0]["text"] for m in agent.session.messages] == [
+        "good-before", "good-after",
+    ]
+    events = query(
+        "SELECT type, data FROM events WHERE type = 'message.user' ORDER BY seq"
+    )
+    assert len(events) == 3
+    assert json.loads(events[1][1]) == {}
+    snap = messages_rows()
+    assert len(snap) == 2
+    rebuild(db_path())
+    assert messages_rows() == snap
+    assert query(
+        "SELECT type, data FROM events WHERE type = 'message.user' ORDER BY seq"
+    ) == events
 
 
 def test_pre_session_events_dash_rebuild_neutral(home):

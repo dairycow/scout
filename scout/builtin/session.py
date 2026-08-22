@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,28 +82,31 @@ def append(session_id: str, type: str, data: dict) -> int:
 
 
 def _project(conn, session_id, seq, type, data, live=True) -> None:
-    if type in ("message.user", "message.assistant"):
-        n = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE session = ?", (session_id,),
-        ).fetchone()[0] + 1
-        conn.execute(
-            "INSERT INTO messages (session, n, seq, message) VALUES (?, ?, ?, ?)",
-            (session_id, n, seq, json.dumps(data["message"], ensure_ascii=False)),
-        )
-        if live and _view is not None and _view.id == session_id:
-            _view.messages.append(data["message"])
-    elif type == "session.fork":
-        rows = conn.execute(
-            "SELECT seq, message FROM messages WHERE session = ? AND n <= ? ORDER BY n",
-            (data["from"], data["at_n"]),
-        ).fetchall()
-        for n, (orig, message) in enumerate(rows, start=1):
+    try:
+        if type in ("message.user", "message.assistant"):
+            n = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session = ?", (session_id,),
+            ).fetchone()[0] + 1
             conn.execute(
                 "INSERT INTO messages (session, n, seq, message) VALUES (?, ?, ?, ?)",
-                (session_id, n, orig, message),
+                (session_id, n, seq, json.dumps(data["message"], ensure_ascii=False)),
             )
-        if live and _view is not None and _view.id == session_id:
-            _view.messages[:] = [json.loads(m) for _, m in rows]
+            if live and _view is not None and _view.id == session_id:
+                _view.messages.append(data["message"])
+        elif type == "session.fork":
+            rows = conn.execute(
+                "SELECT seq, message FROM messages WHERE session = ? AND n <= ? ORDER BY n",
+                (data["from"], data["at_n"]),
+            ).fetchall()
+            for n, (orig, message) in enumerate(rows, start=1):
+                conn.execute(
+                    "INSERT INTO messages (session, n, seq, message) VALUES (?, ?, ?, ?)",
+                    (session_id, n, orig, message),
+                )
+            if live and _view is not None and _view.id == session_id:
+                _view.messages[:] = [json.loads(m) for _, m in rows]
+    except Exception as e:  # noqa: BLE001 — skip; events row stays append-only
+        print(f"scout: projector skipped {type} seq={seq}: {e}", file=sys.stderr)
 
 
 def _on_event(type, **data) -> None:
