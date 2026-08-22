@@ -1,10 +1,9 @@
-"""Example plugin: adds a custom tool.
+"""Example plugin: add a custom tool and a prompt paragraph.
 
 Install:  cp examples/plugins/hello.py ~/.agents/plugins/
           (or into <project>/.agents/plugins/)
 
-Plugins are plain modules exposing scout(api). The api has exactly three
-methods: register_tool, on(event, fn), prompt(text).
+Demonstrates api.tool() and api.prompt() — Plugin API v2.
 """
 
 from scout.tools import Tool
@@ -15,7 +14,7 @@ def hello(args, ctx):
 
 
 def scout(api):
-    api.register_tool(Tool(
+    api.tool(Tool(
         name="hello",
         description="Say hello. Example tool added by a plugin.",
         parameters={
@@ -24,3 +23,4 @@ def scout(api):
         },
         run=hello,
     ))
+    api.prompt("You have a hello tool; use it when asked to greet.")

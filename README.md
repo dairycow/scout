@@ -3,7 +3,7 @@
 A minimal terminal coding agent, small enough to read end-to-end.
 
 scout exists to be understood. If you want to build your own agents, the
-whole thing is ~1,200 lines of dependency-free Python — no SDKs, no
+whole thing is ~1,400 lines of dependency-free Python — no SDKs, no
 frameworks, no personality. Read every file in an afternoon, then hack on it.
 
     pip install git+https://github.com/dairycow/scout
@@ -12,7 +12,7 @@ frameworks, no personality. Read every file in an afternoon, then hack on it.
 - Anthropic and any OpenAI-compatible API (OpenAI, OpenRouter, Groq, Ollama, vLLM, ...)
 - Tools: `bash`, `read`, `write`, `edit`, `grep`, `glob`, `skill`
 - Skills and plugins discovered from the cross-tool `.agents/` directories
-- Sessions persisted as JSONL, resumable
+- Sessions persisted in `~/.scout/store.db`, resumable
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...   # or OPENAI_API_KEY
@@ -21,69 +21,121 @@ scout -p "explain this repo"      # headless: one prompt, print answer, exit
 scout -c                          # resume the latest session
 ```
 
-## How it works
+## Read the source in this order
+
+Kernel first, then builtins, then the store. The afternoon ends at
+`builtin/` — each plugin is one file you can read, replace, or delete.
+
+| Order | File | ~LOC | What you'll learn |
+|---|---|---|---|
+| 1 | `scout/bus.py` | 30 | event bus — `emit` / `on`, open vocabulary |
+| 2 | `scout/host.py` | 140 | boot, PluginApi, registries, three seams |
+| 3 | `scout/agent.py` | 60 | the loop as a pure emitter |
+| 4 | `scout/cli.py` | 110 | args, REPL shell, `-p` / `-c` |
+| 5 | `scout/builtin/` | ~1,000 | 8 internal plugins, one file each, deletable |
+| 6 | `scout/builtin/session.py` | 210 | append-only events + projection; fork/resume as queries |
+
+The rest of the kernel is `tools.py` (Tool / Registry / Ctx), `http.py`
+(the entire network layer), and `errors.py`.
+
+## Architecture
+
+The kernel is ~440 lines and knows nothing: no sqlite, no toml, no
+builtins except three one-line seams. Everything else is a plugin on one
+API — scout's own features use the same `PluginApi` user plugins do.
 
 ```
         cli.py  ── REPL / -p headless / -c resume
            │
-           ▼        builds once at startup
+           ▼  host.boot()
       ┌──────────────────────────────────────────┐
-      │  config ─ agent ─ session (JSONL on disk) │
-      │            │    ▲                         │
-      │            │    │ normalized messages     │
-      │            ▼    │                         │
-      │  llm/anthropic · llm/openai ── http.py    │
-      │            │        (SSE over urllib)     │
-      │            ▼ tool calls                   │
-      │  tools/ (registry) ◄── plugins.py         │
-      │  bash read write edit grep glob skill     │
-      └──────────────────────────────────────────┘
-           ▲                              ▲
-      context.py (system prompt)     skills.py (.agents/skills/)
+      │  host.py  (registries + PluginApi)       │
+      │    builtin manifest, then .agents/       │
+      └──────────────┬───────────────────────────┘
+                     │
+                     ▼
+              agent.py  (pure emitter)
+                     │  message.* / tool.*
+                     ▼
+                  bus.py
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+     session.py  display.py  user plugins
+     (events +                (.agents/)
+      messages)
+          │
+          ▼
+     ~/.scout/store.db
 ```
 
-The whole game is `agent.py` (~50 lines):
+The whole game is still `agent.py` (~60 lines):
 
 ```
-user message → model → tool calls? → run tools → append results → model → ...
+user message → model → tool calls? → run tools → emit results → model → ...
           (repeat until the model replies with plain text)
 ```
 
-Messages are normalized to Anthropic's format everywhere inside scout:
+The loop holds no file handle and no database. Even persistence is a bus
+subscription. Messages are normalized to Anthropic's format everywhere
+inside scout; `builtin/providers/openai.py` is the only place that
+translates to a different wire format.
 
-```json
-[{"role": "user",
-  "content": [
-    {"type": "text", "text": "..."},
-    {"type": "tool_use", "id": "...", "name": "bash", "input": {"command": "ls"}},
-    {"type": "tool_result", "tool_use_id": "...", "content": "exit code: 0", "is_error": false}
-  ]}]
+### PluginApi
+
+| Method | What it does |
+|---|---|
+| `tool(tool)` | register or replace a tool by name (later wins) |
+| `on(event, fn)` | subscribe to any event (open vocabulary) |
+| `prompt(text)` | append a paragraph to the system prompt |
+| `command(name, fn)` | REPL command; `fn(agent, rest_of_line)` |
+| `provider(name, factory)` | `factory(config) → client`; selectable via config |
+| `config(defaults)` | declare config keys + defaults |
+| `emit(type, **data)` | emit any event on the bus |
+
+```python
+# ~/.agents/plugins/deploy.py
+from scout.tools import Tool
+
+def deploy_now(agent, rest): ...
+
+def scout(api):
+    api.provider("groq", lambda cfg: openai_compat(
+        base_url="https://api.groq.com/openai/v1", cfg))
+    api.command("/deploy", deploy_now)
+    api.tool(Tool(name="deploy", description="Deploy the current branch.",
+                  parameters={"type": "object", "properties": {}}, run=deploy))
+    api.on("tool.end", lambda name, **_: print(f"done: {name}"))
+    api.prompt("Deploy only when explicitly asked.")
 ```
 
-`llm/openai.py` is the only place that translates to a different wire format,
-which keeps everything else symmetric and simple.
+### Events are the only memory
 
-## Read the source in this order
+`~/.scout/store.db` has two tables: `events` (the truth — append-only,
+never updated or deleted) and `messages` (a projection). The projector
+is one rule set: `message.user` / `message.assistant` append a row;
+`session.fork` copies the parent's prefix (`n <= at_n`) into the new
+session; everything else is events-only. Fork is a projector rule, not a
+copy job, which is what makes the projection a pure function of the log.
+`scout -c` is a query (newest `session.start` / `session.fork` for this
+directory). `rebuild()` drops `messages` and replays `events`.
 
-| Order | File | ~LOC | What you'll learn |
-|---|---|---|---|
-| 1 | `scout/cli.py` | 165 | entry point, REPL, headless mode |
-| 2 | `scout/agent.py` | 70 | the loop — the heart of any agent |
-| 3 | `scout/llm/__init__.py` | 40 | the one-method client contract |
-| 4 | `scout/llm/anthropic.py` | 80 | streaming SSE → assembled messages |
-| 5 | `scout/llm/openai.py` | 125 | same thing for Chat Completions |
-| 6 | `scout/tools/__init__.py` | 80 | tools, registry, error feedback |
-| 7 | `scout/tools/*.py` | 315 | the seven built-ins |
-| 8 | `scout/session.py` | 45 | JSONL persistence = resume for free |
-| 9 | `scout/context.py` | 85 | system prompt assembly |
-| 10 | `scout/skills.py` | 60 | SKILL.md discovery + frontmatter |
-| 11 | `scout/plugins.py` | 70 | the three-method plugin API |
-| 12 | `scout/config.py` | 65 | layered configuration |
-| 13 | `scout/http.py` | 40 | the entire network layer |
+### Three declared seams
+
+The host imports three factories from `builtin/` — the only
+kernel→builtin coupling:
+
+| Seam | Provided by |
+|---|---|
+| `open_session(cwd, config, resume)` | `builtin/session.py` |
+| `build_prompt(registry, skills, cwd, paragraphs, config)` | `builtin/prompt.py` |
+| `load_skills(cwd)` | `builtin/skills.py` |
+
+Everything else flows through PluginApi.
 
 ## Configuration
 
-Precedence: defaults `<` `~/.config/scout/scout.toml` `<` `./scout.toml`
+Precedence: plugin defaults `<` `~/.config/scout/scout.toml` `<` `./scout.toml`
 `<` `SCOUT_*` environment `<` CLI flags.
 
 | Key | Default | CLI / env | Meaning |
@@ -97,6 +149,8 @@ Precedence: defaults `<` `~/.config/scout/scout.toml` `<` `./scout.toml`
 | `timeout` | `300` | — | seconds per HTTP request |
 
 Any OpenAI-compatible endpoint works by pointing `base_url` at it.
+Plugins declare extra keys with `api.config({...})`; those join the same
+layering.
 
 ## Skills
 
@@ -123,47 +177,47 @@ description: How to prepare and create git commits in this repo.
 
 ## Plugins
 
-A plugin is a Python file exposing `scout(api)` with three methods:
-
-```python
-from scout.tools import Tool
-
-def scout(api):
-    api.register_tool(Tool(           # 1. add or replace a tool
-        name="deploy",
-        description="Deploy the current branch.",
-        parameters={"type": "object", "properties": {}},
-        run=deploy,
-    ))
-    api.on("tool_end", logger)        # 2. subscribe to hooks:
-                                      #    session_start(cwd, model)
-                                      #    tool_start(name, args)
-                                      #    tool_end(name, args, output, is_error)
-                                      #    message_end(message, turn)
-    api.prompt("Deploy only on request.")  # 3. append to the system prompt
-```
-
-Loaded from `~/.agents/plugins/` then `./.agents/plugins/`. A broken plugin
-is skipped with a warning, never fatal. See `examples/plugins/`.
+A plugin is a Python file exposing `scout(api)`. Internal plugins and
+`~/.agents/plugins/*.py` get the same PluginApi (table above). Loaded
+from `~/.agents/plugins/` then `./.agents/plugins/`; later registration
+wins by name, so a user plugin can replace a built-in tool or command. A
+broken plugin is skipped with a warning, never fatal. See
+`examples/plugins/`.
 
 ## Project instructions
 
 `./AGENTS.md` is injected into the system prompt if present (truncated at
 8,000 chars), falling back to `~/.agents/AGENTS.md`.
 
+## Development
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e '.[dev]'
+uv run pytest -q
+```
+
+The suite is offline (fake clients, no network). CI runs it on Python
+3.11, 3.12, and 3.13. Kernel purity (`tests/test_kernel_purity.py` —
+no sqlite/toml in the kernel, builtin imports only at the three seams)
+and projector determinism (`tests/test_session_store.py` — incremental
+projection equals `rebuild()`, row for row) are release gates.
+
 ## Layout recap
 
 ```
-scout/            the package (start in cli.py)
+scout/            the kernel (start in bus.py)
+scout/builtin/    8 internal plugins, same API as user plugins
 tests/            offline test suite (fake clients, no network)
-examples/plugins/ hello tool, tool logger
+examples/plugins/ hello tool, tool logger (Plugin API v2)
 examples/skills/  commit skill
 ```
 
-## Not in v1 (on purpose)
+## Not in v2 (on purpose)
 
 context compaction · MCP · permission prompts · TUI · token accounting ·
-pip entry-point plugins. Each is a small, well-scoped change to one file —
+pip entry-point plugins. Each is a plugin-sized change to one file —
 good first patches.
 
 ## License

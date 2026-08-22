@@ -2,20 +2,17 @@
 
 Install:  cp examples/plugins/log_hook.py ~/.agents/plugins/
 
-Demonstrates hooks. Events and their keyword arguments:
-
-    session_start(cwd, model)
-    tool_start(name, args)
-    tool_end(name, args, output, is_error)
-    message_end(message, turn)
+Demonstrates api.on() with the open event vocabulary. Subscribes to
+tool.end (payload: name, args, output, is_error).
 """
 
 import time
 from pathlib import Path
 
 
-def log(kind, name):
-    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {kind:5} {name}\n"
+def on_tool_end(name, args, output, is_error):
+    flag = "ERR" if is_error else "ok"
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {flag:3} {name}\n"
     path = Path(".scout") / "tool.log"
     path.parent.mkdir(exist_ok=True)
     with path.open("a") as f:
@@ -23,5 +20,4 @@ def log(kind, name):
 
 
 def scout(api):
-    api.on("tool_start", lambda name, args: log("start", name))
-    api.on("tool_end", lambda name, **kw: log("end", name))
+    api.on("tool.end", on_tool_end)

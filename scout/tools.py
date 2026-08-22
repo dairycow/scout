@@ -26,7 +26,7 @@ def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
 class Ctx:
     """Everything a tool is allowed to know about the run."""
     cwd: Path
-    config: dict          # plain dict (kernel may not import scout.config)
+    config: dict          # plain dict — kernel has no config type
     skills: dict = field(default_factory=dict)
 
 
