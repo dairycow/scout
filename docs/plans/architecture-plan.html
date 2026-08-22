@@ -98,7 +98,7 @@
 <main>
 
 <h1>Scout v2 &mdash; Kernel + Plugins + Event Store</h1>
-<p class="subtitle">Architecture plan &middot; scout-agent &middot; a greenfield re-core: a ~400-line kernel (event bus, plugin host, agent loop), everything else &mdash; including config, providers, tools, skills, and sessions &mdash; as internal plugins over one shared API; a single append-only SQLite event log as the source of truth, with message history as a projection. opencode2's constitution at pi's size.</p>
+<p class="subtitle">Architecture plan &middot; scout-harness &middot; a greenfield re-core: a ~400-line kernel (event bus, plugin host, agent loop), everything else &mdash; including config, providers, tools, skills, and sessions &mdash; as internal plugins over one shared API; a single append-only SQLite event log as the source of truth, with message history as a projection. opencode2's constitution at pi's size.</p>
 
 <div class="revision">
   <strong>rev 2</strong> &mdash; greenfield design; user-confirmed decisions: re-core in the same
@@ -683,8 +683,8 @@ v1 last. Every phase ends with the suite green.</p>
   </tr>
   <tr>
     <td><strong>6. Release</strong></td>
-    <td>add <code>.github/workflows/ci.yml</code> + <code>release.yml</code> (&sect;13); register the trusted publisher on pypi.org; tag <code>v2.0.0</code></td>
-    <td>CI green on the v2 branch; tag push publishes <code>scout-agent</code> 2.0.0 to PyPI; <code>pip install scout-agent</code> works</td>
+    <td>add <code>.github/workflows/ci.yml</code> + <code>release.yml</code> (&sect;13); register the trusted publisher on pypi.org; tag <code>v0.2.0</code></td>
+    <td>CI green on the v2 branch; tag push publishes <code>scout-harness</code> 0.2.0 to PyPI; <code>pip install scout-harness</code> works</td>
   </tr>
 </table>
 
@@ -744,20 +744,20 @@ jobs:
 
 <ul>
   <li><strong>Trigger:</strong> pushing a tag matching <code>v*</code> builds and publishes.
-      No manual dispatch, no UI step &mdash; <code>git tag v2.0.0 &amp;&amp; git push --tags</code>
+      No manual dispatch, no UI step &mdash; <code>git tag v0.2.0 &amp;&amp; git push --tags</code>
       is the whole release procedure.</li>
   <li><strong>Auth:</strong> <a href="https://docs.pypi.org/trusted-publishers/">PyPI trusted
       publishing</a> (OIDC). The workflow exchanges a GitHub-attested identity token for a
       short-lived PyPI token; <strong>no API token is stored as a repo secret</strong>.</li>
   <li><strong>One-time manual prerequisite</strong> (cannot be done from the repo): on
       pypi.org &rarr; Publishing &rarr; add a trusted publisher for project
-      <code>scout-agent</code>, owner <code>dairycow</code>, workflow
+      <code>scout-harness</code>, owner <code>dairycow</code>, workflow
       <code>release.yml</code>, environment <em>(none)</em>. Until the project exists on
       PyPI, the first release uses the pending-publisher flow (reserve the name, then
       register the publisher).</li>
   <li><strong>Version discipline:</strong> the tag must equal the
       <code>version</code> field in <code>pyproject.toml</code> (first release:
-      <code>v2.0.0</code>). A mismatched tag is the only way to publish a wrong version;
+      <code>v0.2.0</code>). A mismatched tag is the only way to publish a wrong version;
       the plan adds a tiny consistency check (assert tag == version) as the workflow's first
       step rather than reaching for external action tooling.</li>
   <li><strong>Artifacts:</strong> one sdist + one wheel from
@@ -841,7 +841,7 @@ EOF</code></pre>
   <li><strong>Loop is a pure emitter.</strong> The agent never touches the store or the filesystem; even message persistence is a bus subscription owned by the session plugin.</li>
   <li><strong>Three declared seams.</strong> Host imports <code>open_session</code>, <code>build_prompt</code>, <code>load_skills</code> from builtins &mdash; the only kernel&rarr;builtin coupling; pinned by an import-lint test.</li>
   <li><strong>CI on every push/PR.</strong> <code>ci.yml</code> runs <code>pytest -q</code> on a 3.11&ndash;3.13 matrix; the invariant tests of &sect;14 are release gates, not local courtesies.</li>
-  <li><strong>Releases are tag pushes.</strong> <code>v*</code> tag &rarr; build sdist+wheel &rarr; publish to PyPI; tag must equal <code>pyproject.toml</code>'s version; first release is <code>v2.0.0</code>.</li>
+  <li><strong>Releases are tag pushes.</strong> <code>v*</code> tag &rarr; build sdist+wheel &rarr; publish to PyPI; tag must equal <code>pyproject.toml</code>'s version; first release is <code>v0.2.0</code>.</li>
   <li><strong>OIDC trusted publishing, no stored secrets.</strong> <code>id-token: write</code> + <code>pypa/gh-action-pypi-publish</code>; no <code>PYPI_API_TOKEN</code> in repo secrets; one-time publisher registration on pypi.org is the only manual step.</li>
   <li><strong>Build tooling is dev-time only.</strong> <code>build</code>/<code>pytest</code> are installed by runners (or the <code>[dev]</code> extra); <code>dependencies = []</code> is untouched.</li>
 </ul>
@@ -858,7 +858,7 @@ projection is rebuildable, the bus vocabulary is open, and built-ins are plugins
 which is the whole point of the redesign.</p>
 
 <footer>
-  scout-agent &middot; v2 architecture plan &middot; rev 2, 2026-08-23 &middot;
+  scout-harness &middot; v2 architecture plan &middot; rev 2, 2026-08-23 &middot;
   references: opencode2 architecture (thdxr:
   <a href="https://bsky.app/profile/thdxr.com/post/3msy4gjttoc2f">internal plugins</a>,
   <a href="https://bsky.app/profile/thdxr.com/post/3mt2qx3ktib2c">event sourcing</a>;

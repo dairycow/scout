@@ -6,7 +6,7 @@ scout exists to be understood. If you want to build your own agents, the
 whole thing is ~1,400 lines of dependency-free Python — no SDKs, no
 frameworks, no personality. Read every file in an afternoon, then hack on it.
 
-    pip install git+https://github.com/dairycow/scout
+    pip install scout-harness            # or: pip install git+https://github.com/dairycow/scout
 
 - **Python 3.11+**, stdlib only (zero runtime dependencies)
 - Anthropic and any OpenAI-compatible API (OpenAI, OpenRouter, Groq, Ollama, vLLM, ...)
