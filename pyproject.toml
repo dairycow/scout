@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scout-agent"
+version = "0.1.0"
+description = "A minimal, readable terminal coding agent."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "dairycow" }]
+keywords = ["agent", "llm", "coding-agent", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []  # stdlib only, on purpose
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+scout = "scout.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["scout*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
