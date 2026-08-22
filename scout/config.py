@@ -24,7 +24,7 @@ class Config:
     model: str = "claude-sonnet-4-5"  # for openai provider, e.g. "gpt-4o"
     base_url: str = ""               # override the provider's API endpoint
     api_key: str = ""                # else ANTHROPIC_API_KEY / OPENAI_API_KEY
-    max_tokens: int = 4096           # per model response
+    max_tokens: int = 16384          # per model response
     max_turns: int = 40              # tool-loop guard, per user message
     timeout: int = 300               # seconds per HTTP request
 

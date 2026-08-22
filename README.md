@@ -92,7 +92,7 @@ Precedence: defaults `<` `~/.config/scout/scout.toml` `<` `./scout.toml`
 | `model` | `claude-sonnet-4-5` | `--model` / `SCOUT_MODEL` | model name |
 | `base_url` | *(provider default)* | `--base-url` / `SCOUT_BASE_URL` | e.g. `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` |
 | `api_key` | env | `--api-key` / `SCOUT_API_KEY` | else `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` |
-| `max_tokens` | `4096` | `--max-tokens` | per response |
+| `max_tokens` | `16384` | `--max-tokens` | per response |
 | `max_turns` | `40` | `--max-turns` | tool-loop guard per user message |
 | `timeout` | `300` | — | seconds per HTTP request |
 
