@@ -8,8 +8,6 @@ import scout
 ROOT = Path(scout.__file__).parent
 BANNED = {"sqlite3", "tomllib"}
 SEAMS = {"session", "prompt", "skills"}
-# v1 leftover; dies in P5. Frozen by the phase constraints (do not modify).
-V1_TOMLLIB = {ROOT / "config.py"}
 
 
 def _kernel_modules():
@@ -55,10 +53,10 @@ def test_kernel_purity():
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if _top(alias.name) in BANNED and path not in V1_TOMLLIB:
+                    if _top(alias.name) in BANNED:
                         violations.append(f"{rel}:{node.lineno} imports {alias.name}")
             elif isinstance(node, ast.ImportFrom):
-                if _top(node.module or "") in BANNED and path not in V1_TOMLLIB:
+                if _top(node.module or "") in BANNED:
                     violations.append(f"{rel}:{node.lineno} imports {node.module}")
             seams = _builtin_seams(node)
             if not seams:
