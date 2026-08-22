@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from scout.skills import load_skills, parse_skill
+from scout.builtin.skills import load_skills, parse_skill
 
 
 def test_parse_frontmatter(tmp_path):

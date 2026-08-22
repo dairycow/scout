@@ -3,10 +3,11 @@ stream assembly, with post_sse monkeypatched (no network)."""
 
 import pytest
 
-from scout.config import Config
-from scout.llm.openai import OpenAIClient, to_openai
+from scout.builtin.providers.openai import OpenAIClient, to_openai
 
 TOOLS = [{"name": "bash", "description": "run", "input_schema": {"type": "object"}}]
+
+CFG = {"model": "gpt-4o", "max_tokens": 64, "base_url": "", "timeout": 60, "api_key": "k"}
 
 
 def test_to_openai_translation():
@@ -56,8 +57,8 @@ def client(monkeypatch):
         client.payload = payload
         yield from client.events
 
-    monkeypatch.setattr("scout.llm.openai.post_sse", fake_post_sse)
-    client = OpenAIClient(Config(model="gpt-4o", max_tokens=64), "k")
+    monkeypatch.setattr("scout.builtin.providers.openai.post_sse", fake_post_sse)
+    client = OpenAIClient(CFG, "k")
     client.events = []
     client.payload = None
     return client
