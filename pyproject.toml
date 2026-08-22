@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scout-agent"
-version = "0.1.0"
+version = "2.0.0"
 description = "A minimal, readable terminal coding agent."
 readme = "README.md"
 requires-python = ">=3.11"

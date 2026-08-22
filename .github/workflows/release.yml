@@ -1,0 +1,23 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write   # OIDC: no stored PyPI secrets
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: tag must equal pyproject version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER="$(python -c 'import tomllib; print(tomllib.loads(open("pyproject.toml").read())["project"]["version"])')"
+          [ "$TAG" = "v$VER" ] || { echo "tag $TAG != pyproject v$VER"; exit 1; }
+      - run: pip install build && python -m build   # sdist + wheel
+      - uses: pypa/gh-action-pypi-publish@release/v1
