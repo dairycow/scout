@@ -1,9 +1,7 @@
 """Tests for the agent loop, using a scripted fake client."""
 
-import pytest
-
-from scout.config import Config
-from scout.session import Session
+from scout.agent import Agent
+from scout.bus import Bus
 from scout.tools import Ctx, Registry, Tool
 
 
@@ -24,6 +22,12 @@ class FakeClient:
         return {"role": "assistant", "content": reply}
 
 
+class MemorySession:
+    def __init__(self):
+        self.id = "test"
+        self.messages = []
+
+
 def make_agent(tmp_path, replies, max_turns=10):
     seen = []
 
@@ -33,11 +37,16 @@ def make_agent(tmp_path, replies, max_turns=10):
 
     registry = Registry()
     registry.register(Tool("run", "test tool", {"type": "object"}, record))
-    ctx = Ctx(cwd=tmp_path, config=Config(max_turns=max_turns), skills={})
-    from scout.agent import Agent
+    ctx = Ctx(cwd=tmp_path, config={"max_turns": max_turns}, skills={})
+    bus = Bus()
+    session = MemorySession()
 
-    agent = Agent(FakeClient(replies), registry, "system prompt", Session([], None),
-                  ctx, {h: [] for h in ("session_start", "tool_start", "tool_end", "message_end")})
+    def persist(message, **_):
+        session.messages.append(message)
+
+    bus.on("message.user", persist)
+    bus.on("message.assistant", persist)
+    agent = Agent(FakeClient(replies), registry, "system prompt", session, ctx, bus)
     return agent, seen
 
 
@@ -49,8 +58,8 @@ def call(id, args):
     return {"type": "tool_use", "id": id, "name": "run", "input": args}
 
 
-def result(id, content):
-    return {"type": "tool_result", "tool_use_id": id, "content": content, "is_error": False}
+def result(id, content, is_error=False):
+    return {"type": "tool_result", "tool_use_id": id, "content": content, "is_error": is_error}
 
 
 def test_plain_reply_runs_no_tools(tmp_path):
@@ -80,8 +89,6 @@ def test_tool_call_roundtrip(tmp_path):
 
 
 def test_tool_error_feeds_back_and_loop_continues(tmp_path):
-    from scout.tools import Tool as T
-
     def boom(args, ctx):
         raise ValueError("kaput")
 
@@ -89,7 +96,7 @@ def test_tool_error_feeds_back_and_loop_continues(tmp_path):
         [call("t1", {"cmd": "x"})],
         [text("recovered")],
     ])
-    agent.registry.register(T("run", "test tool", {"type": "object"}, boom))
+    agent.registry.register(Tool("run", "test tool", {"type": "object"}, boom))
     assert agent.run("go") == "recovered"
     error_result = agent.session.messages[2]["content"][0]
     assert error_result["is_error"] is True
@@ -115,16 +122,30 @@ def test_max_turns_guard(tmp_path):
     assert len(agent.client.calls) == 3
 
 
-def test_hooks_fire(tmp_path):
-    events = []
+def test_loop_events(tmp_path):
     agent, _ = make_agent(tmp_path, [
         [call("t1", {"cmd": "ls"})],
-        [text("done")],
+        [text("listed the files")],
     ])
-    for event in agent.hooks:
-        agent.hooks[event].append(lambda **kw: events.append(kw))
-    agent.run("go")
-    kinds = [type(next(iter(k.values()))).__name__ for k in events]
-    assert len([k for k in events if "message" in k]) == 2
-    assert len([k for k in events if "name" in k and "output" in k]) == 1  # tool_end
-    assert any(k.get("name") == "run" and "output" not in k for k in events)  # tool_start
+    events = []
+    agent.bus.on("*", lambda type, **data: events.append((type, data)))
+    agent.run("list files")
+    types = [t for t, _ in events]
+    assert types == [
+        "message.user", "message.assistant", "tool.start", "tool.end",
+        "message.user", "message.assistant",
+    ]
+    assert events[0][1] == {
+        "message": {"role": "user", "content": [{"type": "text", "text": "list files"}]},
+    }
+    assert events[1][1]["turn"] == 1
+    assert events[1][1]["message"]["content"] == [call("t1", {"cmd": "ls"})]
+    assert events[2][1] == {"name": "run", "args": {"cmd": "ls"}}
+    assert events[3][1] == {
+        "name": "run", "args": {"cmd": "ls"}, "output": "ran ls", "is_error": False,
+    }
+    assert events[4][1] == {
+        "message": {"role": "user", "content": [result("t1", "ran ls")]},
+    }
+    assert events[5][1]["turn"] == 2
+    assert events[5][1]["message"]["content"] == [text("listed the files")]

@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from ..config import Config
-
 MAX_OUTPUT = 30_000  # hard cap on any single tool result
 
 
@@ -28,8 +26,8 @@ def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
 class Ctx:
     """Everything a tool is allowed to know about the run."""
     cwd: Path
-    config: Config
-    skills: dict = field(default_factory=dict)  # name -> Skill
+    config: dict          # plain dict (kernel may not import scout.config)
+    skills: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -67,10 +65,10 @@ class Registry:
 
 
 def builtins() -> list[Tool]:
-    """The seven tools scout ships with."""
-    from . import bash, edit, read, search, skill, write
+    """v1 names so frozen context tests collect; real tools return in Phase 3."""
+    nop = lambda args, ctx: ""  # noqa: E731
+    return [
+        Tool(n, n, {"type": "object"}, nop)
+        for n in ("bash", "read", "write", "edit", "grep", "glob", "skill")
+    ]
 
-    tools: list[Tool] = []
-    for module in (bash, read, write, edit, search, skill):
-        tools.extend(module.TOOLS)
-    return tools
