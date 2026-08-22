@@ -1,5 +1,9 @@
-"""Built-in tools. Implementations return in Phase 3."""
+"""Built-in tools. Implementations register via PluginApi."""
 
 
 def scout(api) -> None:
-    pass
+    from . import bash, edit, read, search, skill, write
+
+    for module in (bash, read, write, edit, search, skill):
+        for t in module.TOOLS:
+            api.tool(t)
