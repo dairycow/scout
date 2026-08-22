@@ -2,13 +2,14 @@
 
 from scout.context import build_system
 from scout.skills import Skill
-from scout.tools import Registry, builtins
+from scout.tools import Registry, Tool
 
 
 def test_system_prompt_contains_everything(tmp_path):
     (tmp_path / "AGENTS.md").write_text("Always use uv instead of pip.\n")
     registry = Registry()
-    registry.register(*builtins())
+    nop = lambda args, ctx: ""  # noqa: E731
+    registry.register(*(Tool(n, n, {"type": "object"}, nop) for n in ("bash", "edit", "skill")))
     skills = {"commit": Skill("commit", "how to commit", tmp_path, "body")}
 
     system = build_system(registry, skills, tmp_path, ["say zebras are grey"])

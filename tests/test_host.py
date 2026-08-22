@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+from scout.builtin import MANIFEST
+from scout.bus import Bus
 from scout.errors import ScoutError
 from scout.host import boot, Runtime
 
@@ -28,6 +30,18 @@ from scout.tools import Tool
 
 def scout(api):
     api.tool(Tool("echo", "from-later", {"type": "object"}, lambda a, c: "from-later"))
+'''
+
+BAD = '''
+def scout(api):
+    raise RuntimeError("boom")
+'''
+
+GOOD = '''
+from scout.tools import Tool
+
+def scout(api):
+    api.tool(Tool("good_tool", "from-good", {"type": "object"}, lambda a, c: "from-good"))
 '''
 
 
@@ -104,3 +118,43 @@ def test_later_plugin_tool_override_wins(isolated):
 def test_unknown_provider(isolated):
     with pytest.raises(ScoutError, match="unknown provider"):
         boot(isolated, {"provider": "nope"})
+
+
+def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
+    assert MANIFEST[0] == "config"
+    assert MANIFEST.index("session") < MANIFEST.index("display")
+    assert MANIFEST == [
+        "config", "session", "providers", "tools",
+        "skills", "prompt", "display", "commands",
+    ]
+
+    events = []
+    real_emit = Bus.emit
+
+    def capturing_emit(self, type, **data):
+        events.append((type, data))
+        return real_emit(self, type, **data)
+
+    monkeypatch.setattr(Bus, "emit", capturing_emit)
+    boot(isolated, {})
+
+    loaded = [(d["name"], d["source"]) for t, d in events if t == "plugin.loaded"]
+    assert loaded == [(name, "builtin") for name in MANIFEST] + [("fake", "user")]
+
+    starts = [d for t, d in events if t == "session.start"]
+    assert len(starts) == 1
+    for key in ("cwd", "model", "pid", "repository", "branch"):
+        assert key in starts[0]
+        assert isinstance(starts[0][key], str)
+
+
+def test_raising_user_plugin_skipped_later_still_loads(isolated, capsys):
+    user_dir = isolated.parent / ".agents" / "plugins"
+    write_plugin(user_dir, "bad.py", BAD)
+    write_plugin(user_dir, "good.py", GOOD)
+    rt = boot(isolated, {})
+    err = capsys.readouterr().err
+    assert "plugin bad failed" in err
+    assert "bad" not in rt.plugins
+    assert "good" in rt.plugins
+    assert "good_tool" in rt.registry.tools

@@ -63,12 +63,3 @@ class Registry:
         except Exception as e:  # noqa: BLE001 — feed errors back to the model
             return f"Error: {e}", True
 
-
-def builtins() -> list[Tool]:
-    """v1 names so frozen context tests collect; real tools return in Phase 3."""
-    nop = lambda args, ctx: ""  # noqa: E731
-    return [
-        Tool(n, n, {"type": "object"}, nop)
-        for n in ("bash", "read", "write", "edit", "grep", "glob", "skill")
-    ]
-

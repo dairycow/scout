@@ -132,7 +132,7 @@ def boot(cwd: Path, cli: dict) -> Runtime:
     client = providers[config["provider"]](config)
     session = open_session(cwd, config, resume)
     bus.emit("session.start", cwd=str(cwd), model=config.get("model", ""),
-             pid=os.getpid(), repository=_git(cwd, "rev-parse", "--show-toplevel"),
+             pid=str(os.getpid()), repository=_git(cwd, "rev-parse", "--show-toplevel"),
              branch=_git(cwd, "branch", "--show-current"))
     skills = load_skills(cwd)
     ctx = Ctx(cwd=cwd, config=config, skills=skills)

@@ -13,7 +13,7 @@ class FakeClient:
         self.calls = []
 
     def complete(self, system, messages, tools, on_text=None):
-        self.calls.append({"system": system, "messages": messages, "tools": tools})
+        self.calls.append({"system": system, "messages": list(messages), "tools": tools})
         reply = self.replies.pop(0)
         if on_text:
             for block in reply:
@@ -81,9 +81,15 @@ def test_tool_call_roundtrip(tmp_path):
     assert roles == ["user", "assistant", "user", "assistant"]
     results = agent.session.messages[2]["content"]
     assert results == [result("t1", "ran ls")]
-    # the second model call saw the tool result
+    # bus projection was current BEFORE each complete() call
+    first_messages = agent.client.calls[0]["messages"]
+    assert first_messages[0] == {
+        "role": "user", "content": [{"type": "text", "text": "list files"}],
+    }
+    assert len(first_messages) == 1
     second_messages = agent.client.calls[1]["messages"]
-    assert second_messages[2]["content"][0]["content"] == "ran ls"
+    assert second_messages[2]["content"] == [result("t1", "ran ls")]
+    assert len(second_messages) == 3
     # tools schemas were passed through
     assert agent.client.calls[0]["tools"][0]["name"] == "run"
 
