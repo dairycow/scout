@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scout v2 — Kernel + Plugins + Event Store (Architecture Plan rev 2)</title>
+<style>
+  :root {
+    --ink: #1a1f28;
+    --muted: #5b6472;
+    --accent: #0f62fe;
+    --line: #d8dde5;
+    --bg: #ffffff;
+    --code-bg: #f4f6f9;
+    --green-bg: #e9f7ee;
+    --green-ink: #0d5c2e;
+    --red-bg: #fdecec;
+    --red-ink: #8f1f1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    margin: 0;
+    line-height: 1.6;
+  }
+  main { max-width: 60rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+  h1 { font-size: 1.9rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.3rem; margin-top: 2.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin-top: 1.75rem; }
+  p, li { color: var(--ink); }
+  .subtitle { color: var(--muted); margin-top: 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.875em;
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.925rem; }
+  th, td { border: 1px solid var(--line); text-align: left; padding: 0.5rem 0.75rem; vertical-align: top; }
+  th { background: var(--code-bg); }
+  .tag {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.1rem 0.65rem;
+    vertical-align: middle;
+  }
+  .tag.add    { background: var(--green-bg); color: var(--green-ink); }
+  .tag.modify { background: #fff4e0; color: #7a4d00; }
+  .tag.remove { background: var(--red-bg); color: var(--red-ink); }
+  .tag.keep   { background: var(--code-bg); color: var(--muted); }
+  ul.decisions { padding-left: 1.2rem; }
+  ul.decisions li { margin: 0.3rem 0; }
+  .toc {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin-top: 1.5rem;
+    font-size: 0.925rem;
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .revision {
+    background: var(--green-bg);
+    border: 1px solid #bfe5cc;
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+    margin-top: 1.5rem;
+    font-size: 0.925rem;
+  }
+  footer { color: var(--muted); font-size: 0.85rem; margin-top: 3.5rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  .comment { color: var(--muted); }
+  blockquote {
+    border-left: 3px solid var(--line);
+    margin: 1rem 0;
+    padding: 0.25rem 1rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Scout v2 &mdash; Kernel + Plugins + Event Store</h1>
+<p class="subtitle">Architecture plan &middot; scout-agent &middot; a greenfield re-core: a ~400-line kernel (event bus, plugin host, agent loop), everything else &mdash; including config, providers, tools, skills, and sessions &mdash; as internal plugins over one shared API; a single append-only SQLite event log as the source of truth, with message history as a projection. opencode2's constitution at pi's size.</p>
+
+<div class="revision">
+  <strong>rev 2</strong> &mdash; greenfield design; user-confirmed decisions: re-core in the same
+  repo with no backward compatibility (external plugins may break); full plugin inversion;
+  events are the source of truth projected into SQLite (<code>sqlite3</code> is stdlib);
+  stdlib-only stays; the cross-tool <code>.agents/</code> convention stays; v1 sessions are
+  ignored. <strong>This plan supersedes and removes <code>docs/sessions-plan.html</code></strong>
+  (that document's rev 2): its per-session directory layout and
+  <code>messages.jsonl</code>+<code>events.jsonl</code> dual-file design are replaced by &sect;6;
+  its research and its git-context, resume-scope, and legacy-session decisions carry over
+  unchanged. Release pipeline decisions (tag-triggered PyPI publish via OIDC trusted
+  publishing, plus CI) added in &sect;13. rev 2 adds Anthropic prompt-cache markup
+  (&sect;8.1) &mdash; the only caching change scout needs.
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  &mdash;
+  <a href="#motivation">1. Motivation</a> &middot;
+  <a href="#research">2. Research: opencode2, pi, Copilot CLI</a> &middot;
+  <a href="#principles">3. Design principles</a> &middot;
+  <a href="#glance">4. Architecture at a glance</a> &middot;
+  <a href="#kernel">5. The kernel</a> &middot;
+  <a href="#store">6. Event store &amp; projector</a> &middot;
+  <a href="#api">7. Plugin API v2</a> &middot;
+  <a href="#builtin">8. Internal plugins</a> &middot;
+  <a href="#budget">9. Size budget</a> &middot;
+  <a href="#survivors">10. What survives, what dies</a> &middot;
+  <a href="#repo">11. Repo layout</a> &middot;
+  <a href="#rollout">12. Rollout plan</a> &middot;
+  <a href="#release">13. Release &amp; CI pipeline</a> &middot;
+  <a href="#tests">14. Test plan</a> &middot;
+  <a href="#decisions">15. Decisions &amp; non-goals</a>
+</nav>
+
+<!-- ================================================================ -->
+<h2 id="motivation">1. Motivation</h2>
+
+<p>Scout v1 works and is small (~1,240 lines). But its <em>center of gravity</em> is wrong:
+<code>agent.py</code> and <code>cli.py</code> are the hub, and everything else is a spoke
+bolted on. Built-in tools are hardwired in <code>cli.py</code>; providers are hardwired in
+<code>llm/</code>; config validation hardcodes the provider list (<code>scout/config.py:63</code>);
+REPL commands are an if/elif chain (<code>scout/cli.py:141-156</code>); persistence is a
+direct call inside the agent loop; plugins get a guest API with a closed, four-event
+vocabulary (<code>scout/plugins.py:17</code>) while the interesting machinery &mdash; display,
+session writes, config &mdash; bypasses it entirely.</p>
+
+<p>The result is that every feature lands in the core. There is no way to add a provider, a
+command, or a store without editing kernel files, and no way to remove one. Scout v1 is
+minimal by line count but not by <em>structure</em>.</p>
+
+<p>opencode2 solved exactly this with one architectural move:</p>
+
+<blockquote>
+  an architectural change we made in opencode2 is nearly everything is an internal
+  plugin / there's 68 of them that cover our built in agents, integrations, config
+  loading, etc &mdash; <a href="https://bsky.app/profile/thdxr.com/post/3msy4gjttoc2f">thdxr</a>
+</blockquote>
+
+<blockquote>
+  OpenCode is the first time i could justify event sourcing in a real system /
+  everything that happens is an event which gets projected into the sqlite db
+  &mdash; <a href="https://bsky.app/profile/thdxr.com/post/3mt2qx3ktib2c">thdxr</a>
+</blockquote>
+
+<p>Scout v2 takes both ideas and neither of opencode2's costs: no 68 plugins, no TUI stack,
+no server/client split &mdash; eight internal plugins, one file each, in a package you can
+still read in an afternoon. The point is not to rebuild opencode; it is to give scout
+opencode's <em>shape</em> &mdash; tiny kernel, uniform extension surface, events as truth
+&mdash; at pi's size, and to make it fully mine: readable, maintainable, and deletable
+feature by feature.</p>
+
+<p>Goals:</p>
+<ul>
+  <li>A kernel small enough to hold in your head (~400 lines): event bus, plugin host, agent loop, REPL shell. Nothing else.</li>
+  <li>One extension API for everything &mdash; scout's own features use the same API user plugins do.</li>
+  <li>A single append-only event log as the source of truth; message history, resume, and forking are queries/projections over it.</li>
+  <li>Every feature deletable: removing an internal plugin must degrade gracefully, never break the loop.</li>
+  <li>Still stdlib-only, still readable end-to-end, still ~1,400 lines total.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="research">2. Research: opencode2, pi, Copilot CLI</h2>
+
+<h3>opencode2</h3>
+<p>The two moves quoted above, in scout's terms:</p>
+<table>
+  <tr><th>opencode2 mechanism</th><th>What it buys</th></tr>
+  <tr>
+    <td>Nearly everything is an internal plugin (68 of them: built-in agents, integrations, config loading, &hellip;) sharing one API with external plugins</td>
+    <td>The core stops growing; features are symmetric (same registration path); users can override built-ins the same way they add features; the architecture is legible &mdash; to understand "how does X work," read X's plugin</td>
+  </tr>
+  <tr>
+    <td>Event sourcing: everything that happens is an event, projected into SQLite</td>
+    <td>One durable record (no transcript/analytics drift); global sequence numbers; reverts and forks are events, not copy jobs; search/indexes are derived and rebuildable</td>
+  </tr>
+</table>
+
+<h3>pi</h3>
+<p><a href="https://github.com/badlogic/pi-mono">pi</a> (badlogic) is the proof that a coding
+agent needs almost no core: a few-hundred-line agent loop, a handful of tools, and a
+deliberate refusal to grow machinery. Its lesson for scout is sizing, not structure: the
+value of a small core is that you can read it, trust it, and replace it. Scout v2 keeps
+pi's line-count discipline while adopting opencode2's organization.</p>
+
+<h3>Copilot CLI</h3>
+<p>Copilot's on-disk session layout (<code>~/.copilot/session-state/&lt;uuid&gt;/</code> with
+<code>events.jsonl</code>, per GitHub's
+<a href="https://docs.github.com/en/copilot/concepts/agents/copilot-cli/chronicle">chronicle docs</a>
+and reverse-engineering writeups) validated event-oriented session records. Scout v2 keeps
+the event orientation but centralizes: one SQLite store instead of per-session directories,
+because a global sequence number and atomic projections beat greppability for an agent's
+write rate (see &sect;6).</p>
+
+<h3>What scout adopts, at what scale</h3>
+<table>
+  <tr><th>Mechanism</th><th>Scout v2 adoption</th></tr>
+  <tr>
+    <td>Internal plugins for built-in features <span class="comment">(opencode2)</span></td>
+    <td><span class="tag add">adopted</span> 8 internal plugins, one file each &mdash; not 68; no plugin needs more than ~180 lines</td>
+  </tr>
+  <tr>
+    <td>Events as source of truth, projected into SQLite <span class="comment">(opencode2)</span></td>
+    <td><span class="tag add">adopted</span> one <code>events</code> table + a ~40-line projector; no sequence-number API surface, no epochs, no compaction checkpoints (non-goals)</td>
+  </tr>
+  <tr>
+    <td>Everything flows through the bus <span class="comment">(opencode2)</span></td>
+    <td><span class="tag add">adopted</span> the agent loop becomes a pure emitter &mdash; it holds no store and writes no files; even message persistence is a bus subscription</td>
+  </tr>
+  <tr>
+    <td>Small-core discipline <span class="comment">(pi)</span></td>
+    <td><span class="tag add">adopted</span> ~400-line kernel; total budget ~1,400 lines; readability is a release criterion</td>
+  </tr>
+  <tr>
+    <td>TUI framework, server/client split, cloud sync, permission engine</td>
+    <td><span class="tag remove">not adopted</span> deliberate non-goals (&sect;15)</td>
+  </tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="principles">3. Design principles</h2>
+
+<ul class="decisions">
+  <li><strong>The kernel knows nothing.</strong> It may not import <code>sqlite3</code>, <code>tomllib</code>, or any builtin plugin. Kernel = bus + host + loop + shell + tool registry + HTTP. A test enforces this (&sect;14).</li>
+  <li><strong>One API, two kinds of user.</strong> Internal plugins and <code>~/.agents/plugins/*.py</code> get the same <code>PluginApi</code>. Built-ins are just plugins that ship in the box and load first.</li>
+  <li><strong>Events are the only memory.</strong> Anything worth remembering is an event in one append-only table. Views (message history, listings, dashboards) are projections; projections are rebuildable from events alone or they don't ship.</li>
+  <li><strong>Failure is local.</strong> A broken subscriber, a failed plugin file, an unwritable store &mdash; warn and continue. The loop must survive every plugin, including scout's own.</li>
+  <li><strong>Explicit beats clever.</strong> Three declared one-line seams between host and builtins (&sect;5.5) instead of a service-indirection API. Greenfield, but no magic.</li>
+  <li><strong>Stdlib only, Python 3.11+.</strong> <code>sqlite3</code> and <code>tomllib</code> count as stdlib. Zero runtime dependencies, unchanged.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="glance">4. Architecture at a glance</h2>
+
+<pre><code>              ┌───────────────────────── cli.py (shell) ─────────────────────────┐
+              │  parse args → host.boot() → REPL; commands dispatch via registry │
+              └───────────────────────────────────┬─────────────────────────────┘
+                                                  │ boots
+              ┌───────────────────────────── host.py ───────────────────────────┐
+              │  1. load builtin manifest, then .agents/plugins/                 │
+              │     every plugin gets the same PluginApi                         │
+              │  2. fill registries: tools · commands · providers · prompts      │
+              │  3. resolve config; open session; build system prompt            │
+              │  4. assemble Agent(client, registry, session, bus)               │
+              └───────────┬──────────────────────────────────────┬───────────────┘
+                          │ emits                                │ reads history
+                          ▼                                      ▼
+              ┌─────────────────────┐                    ┌───────────────┐
+              │  agent.py (the loop)│ ── message.* ─────► │  bus.py       │
+              │  pure emitter       │ ── tool.*     ────► │  emit()/on()  │
+              └─────────────────────┘                    └───────┬───────┘
+                                                                │ fan-out, in
+                                     ┌──────────────────────────┼──────────────────┐
+                                     ▼                          ▼                  ▼
+                          builtin/session.py          builtin/display.py    user plugins
+                          (first subscriber:          (prints tool           (.agents/plugins)
+                           events table +             lines)                 same events,
+                           messages projection)                              same API
+                                     │
+                                     ▼
+                          ~/.scout/store.db   <span class="comment"># events (truth) + messages (projection)</span></code></pre>
+
+<p>Three things to notice:</p>
+<ul>
+  <li><strong>The loop is a pure emitter.</strong> <code>agent.py</code> holds no file handle and no
+      database. Even the user message entering history is an event on the bus; the session
+      plugin's subscription is what persists it. Because the bus is synchronous and the
+      session plugin subscribes first, the projection is already updated when
+      <code>emit()</code> returns &mdash; the loop can read <code>session.messages</code>
+      immediately after emitting.</li>
+  <li><strong>Persistence is a plugin.</strong> The kernel has no idea sessions exist beyond a
+      read-only <code>Session</code> protocol (&sect;5.4). Delete <code>builtin/session.py</code>
+      and scout still runs, memory-only.</li>
+  <li><strong>Display is a plugin.</strong> What v1 hardwired as <code>display_hooks()</code>
+      in <code>cli.py</code> is now a subscriber that can be replaced or silenced.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="kernel">5. The kernel</h2>
+
+<h3>5.1 <code>scout/bus.py</code> <span class="tag add">add</span> (~30 lines)</h3>
+
+<pre><code>class Bus:
+    def on(self, type: str, fn) -&gt; None      <span class="comment"># subscribe to ANY dotted event name</span>
+    def emit(self, type: str, **data) -&gt; None <span class="comment"># call subscribers in subscription order</span></code></pre>
+
+<ul>
+  <li><strong>Open vocabulary.</strong> No <code>HOOKS</code> tuple, no validation. Any dotted,
+      lowercase name (<code>tool.start</code>, <code>deploy.finished</code>, anything a plugin
+      invents) is legal. Cross-plugin integration needs no core change.</li>
+  <li><strong>Synchronous, ordered, safe.</strong> Subscribers run in subscription order on the
+      calling thread; a raising subscriber is reported to stderr and skipped &mdash; never fatal.</li>
+</ul>
+
+<h3>5.2 <code>scout/host.py</code> <span class="tag add">add</span> (~120 lines)</h3>
+
+<pre><code>def boot(cwd: Path, cli: dict) -&gt; Runtime:
+    <span class="comment"># 1. registries + bus</span>
+    <span class="comment"># 2. run builtin manifest in order, then .agents/plugins/*.py (user first,</span>
+    <span class="comment">#    then project — later registration wins by name, so users override builtins)</span>
+    <span class="comment"># 3. resolve layered config; pick provider; build client</span>
+    <span class="comment"># 4. open session (new or resumed); emit session.start</span>
+    <span class="comment"># 5. build system prompt; assemble Agent; return Runtime</span></code></pre>
+
+<ul>
+  <li>Owns the four registries: <strong>tools</strong> (name &rarr; <code>Tool</code>),
+      <strong>commands</strong> (<code>"/fork"</code> &rarr; callable),
+      <strong>providers</strong> (name &rarr; client factory),
+      <strong>prompts</strong> (list of paragraphs).</li>
+  <li>Plugin loading is v1's proven loader, minus the closed hook list: sorted
+      <code>*.py</code> files from <code>~/.agents/plugins/</code> then
+      <code>./.agents/plugins/</code>, each executed, expecting a
+      <code>scout(api)</code> function; failures warn and skip.</li>
+  <li>Later registration replaces earlier <em>by name</em> &mdash; so a user plugin can swap
+      out a built-in tool or command. The inversion pays off here: overriding scout is
+      identical to extending scout.</li>
+</ul>
+
+<h3>5.3 <code>scout/agent.py</code> <span class="tag modify">rewrite</span> (~65 lines)</h3>
+
+<p>Same loop as v1 in spirit; the difference is <em>how it communicates</em>:</p>
+
+<pre><code>def run(self, user_text: str, on_text=None) -&gt; str:
+    self.bus.emit("message.user", message={"role": "user", "content": [...]})
+    for turn in range(...):
+        message = self.client.complete(self.system, self.session.messages, ...)
+        self.bus.emit("message.assistant", message=message, turn=turn + 1)
+        ...
+        for call in calls:
+            self.bus.emit("tool.start", name=call["name"], args=call["input"])
+            output, is_error = self.registry.dispatch(...)
+            self.bus.emit("tool.end", name=..., args=..., output=..., is_error=...)
+        ...</code></pre>
+
+<ul>
+  <li>No <code>session.append()</code> calls, no <code>emit(hooks, ...)</code> helper &mdash;
+      the loop only knows the bus, the registry, the client, and the read-only session view.</li>
+</ul>
+
+<h3>5.4 <code>scout/cli.py</code> <span class="tag modify">rewrite</span> (~95 lines) and the <code>Session</code> protocol</h3>
+
+<pre><code>class Session(Protocol):
+    id: str
+    messages: list[dict]   <span class="comment"># projection view; always current after emit() returns</span></code></pre>
+
+<ul>
+  <li><code>cli.py</code> is argument parsing, <code>host.boot()</code>, and a REPL whose
+      command dispatch is a dict lookup into the command registry. Every command &mdash;
+      <code>/help</code>, <code>/clear</code>, <code>/fork</code>, <code>/skills</code>,
+      <code>/plugins</code> &mdash; is registered by a plugin. The if/elif chain is gone.</li>
+  <li>The protocol is read-only: the agent never writes history directly (writes are bus
+      events consumed by the session plugin, &sect;6).</li>
+</ul>
+
+<h3>5.5 The three declared seams</h3>
+
+<p>The host needs three things only builtins can provide. Rather than a service-registry API
+(considered, rejected &mdash; indirection costs readability), host imports three one-line
+factories from <code>builtin/</code>:</p>
+
+<table>
+  <tr><th>Seam</th><th>Signature</th><th>Provided by</th></tr>
+  <tr><td>session factory</td><td><code>open_session(cwd, config, resume: bool) -&gt; Session</code></td><td><code>builtin/session.py</code></td></tr>
+  <tr><td>prompt builder</td><td><code>build_prompt(registry, skills, cwd, paragraphs, config) -&gt; str</code></td><td><code>builtin/prompt.py</code></td></tr>
+  <tr><td>skills loader</td><td><code>load_skills(cwd) -&gt; dict[str, Skill]</code></td><td><code>builtin/skills.py</code></td></tr>
+</table>
+<p>These are the only kernel&rarr;builtin imports. Everything else flows through
+<code>PluginApi</code>. An import-lint test pins this (&sect;14).</p>
+
+<!-- ================================================================ -->
+<h2 id="store">6. Event store &amp; projector</h2>
+
+<h3>6.1 One database, two tables</h3>
+
+<p><code>~/.scout/store.db</code> (SQLite, WAL mode, single connection, commit per event):</p>
+
+<pre><code>CREATE TABLE events (            <span class="comment"># the truth: append-only, never UPDATEd or DELETEd</span>
+  seq     INTEGER PRIMARY KEY,  <span class="comment"># global, monotonic</span>
+  session TEXT  NOT NULL,       <span class="comment"># uuid4().hex</span>
+  ts      TEXT  NOT NULL,       <span class="comment"># UTC ISO 8601, fixed-width</span>
+  type    TEXT  NOT NULL,       <span class="comment"># dotted name, open vocabulary</span>
+  data    TEXT  NOT NULL        <span class="comment"># JSON object</span>
+);
+
+CREATE TABLE messages (          <span class="comment"># the projection: pure function of events</span>
+  session TEXT  NOT NULL,
+  n       INTEGER NOT NULL,     <span class="comment"># position within the session</span>
+  seq     INTEGER NOT NULL,     <span class="comment"># originating event</span>
+  message TEXT  NOT NULL,       <span class="comment"># JSON, Anthropic-normalized</span>
+  PRIMARY KEY (session, n)
+);</code></pre>
+
+<h3>6.2 Event vocabulary</h3>
+
+<p>Canonical events &mdash; open set, readers skip unknown types:</p>
+<table>
+  <tr><th>Event</th><th><code>data</code></th><th>Emitted by</th></tr>
+  <tr><td><code>session.start</code></td><td>cwd, model, pid, repository, branch</td><td>session plugin (boot, <code>/clear</code>)</td></tr>
+  <tr><td><code>session.fork</code></td><td>from, at_n, cwd, model, pid</td><td>session plugin (<code>/fork</code>)</td></tr>
+  <tr><td><code>message.user</code></td><td>message</td><td>agent loop</td></tr>
+  <tr><td><code>message.assistant</code></td><td>message, turn</td><td>agent loop</td></tr>
+  <tr><td><code>tool.start</code></td><td>name, args</td><td>agent loop</td></tr>
+  <tr><td><code>tool.end</code></td><td>name, args, output, is_error</td><td>agent loop</td></tr>
+  <tr><td><code>plugin.loaded</code></td><td>name, source</td><td>host</td></tr>
+  <tr><td><code>config.loaded</code></td><td>config</td><td>config plugin</td></tr>
+</table>
+
+<p>Invariant: <strong>every session's first event is either <code>session.start</code> or
+<code>session.fork</code></strong> (the fork event doubles as the new session's start; it
+carries the same metadata fields plus <code>from</code>/<code>at_n</code>).</p>
+
+<h3>6.3 The projector (~40 lines)</h3>
+
+<p>The complete rule set &mdash; the only code that interprets events:</p>
+<table>
+  <tr><th>On event</th><th>Projection effect</th></tr>
+  <tr><td><code>message.user</code> / <code>message.assistant</code></td><td>append row to <code>messages</code> for that session</td></tr>
+  <tr><td><code>session.fork</code></td><td>copy parent's rows <code>n &lt;= at_n</code> into the new session</td></tr>
+  <tr><td>anything else</td><td>events table only</td></tr>
+</table>
+
+<ul>
+  <li><strong>Incremental:</strong> the session plugin tracks the last projected <code>seq</code>;
+      each new event applies one rule.</li>
+  <li><strong>Rebuildable:</strong> <code>rebuild()</code> drops <code>messages</code> and
+      replays <code>events</code>. A test asserts incremental == rebuild, byte for byte
+      (&sect;14). Forking is a <em>projector rule</em>, not a copy job &mdash; which is what
+      makes the projection a pure function.</li>
+</ul>
+
+<h3>6.4 Sessions, resume, fork</h3>
+<ul>
+  <li><strong>Session id:</strong> <code>uuid4().hex</code>; exists as a column value, not a directory.</li>
+  <li><strong>Resume (<code>scout -c</code>):</strong> newest <code>session.start</code>/<code>session.fork</code>
+      whose <code>data.cwd</code> equals the resolved working directory; per-directory scope,
+      unchanged from v1/rev-2 decisions.</li>
+  <li><strong>Fork (<code>/fork [n]</code>):</strong> emit one <code>session.fork</code> event
+      (<code>from</code> = parent id, <code>at_n</code> = prefix length, default all); the
+      projection inherits the prefix. The parent is untouched &mdash; no files copied, ever.</li>
+  <li><strong>Legacy:</strong> v1 <code>&lt;cwd&gt;/.scout/sessions/*.jsonl</code> and the
+      rev-2 <code>~/.scout/sessions/&lt;uuid&gt;/</code> layout are ignored. No migration.</li>
+</ul>
+
+<h3>6.5 Why this beats the rev-2 dual-file design</h3>
+<ul class="decisions">
+  <li><strong>No drift, by construction.</strong> Rev-2 kept <code>messages.jsonl</code> (truth for content) and <code>events.jsonl</code> (truth for timing) &mdash; two files that can disagree. v2 has one truth and one derived view.</li>
+  <li><strong>Global sequence numbers for free.</strong> Ordering across sessions, incremental projection checkpoints, and future compaction ("events before seq N are summarized in &hellip;") all hang off <code>seq</code>.</li>
+  <li><strong>Queryable history.</strong> Resume-by-cwd, fork lineage, "sessions from last week" are one-liners in SQL instead of directory scans.</li>
+  <li><strong>Still inspectable:</strong> <code>sqlite3 ~/.scout/store.db 'select * from events'</code> on any machine with Python. JSONL's greppability is the real loss; accepted.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="api">7. Plugin API v2</h2>
+
+<p>Breaking change; greenfield. Superset of v1 in spirit (&ldquo;a plugin is a Python file
+exposing <code>scout(api)</code>&rdquo;), reworked around the open bus:</p>
+
+<pre><code>def scout(api):
+    api.tool(Tool(...))                    <span class="comment"># register/replace a tool by name</span>
+    api.on("tool.end", fn)                 <span class="comment"># subscribe to ANY event (open vocabulary)</span>
+    api.prompt("Deploy only on request.")  <span class="comment"># append a system-prompt paragraph</span>
+    api.command("/deploy", fn)             <span class="comment"># REPL command; fn(agent, rest_of_line)</span>
+    api.provider("groq", factory)          <span class="comment"># factory(config) -&gt; client; selectable via config</span>
+    api.config({"deploy_timeout": 10})     <span class="comment"># declare config keys + defaults</span></code></pre>
+
+<table>
+  <tr><th>Method</th><th>Notes</th></tr>
+  <tr><td><code>tool(tool)</code></td><td>replaces <code>register_tool</code>; later wins by name &mdash; user plugins can replace built-ins</td></tr>
+  <tr><td><code>on(event, fn)</code></td><td>no closed hook list; subscriber exceptions are caught and reported by the bus</td></tr>
+  <tr><td><code>prompt(text)</code></td><td>unchanged from v1</td></tr>
+  <tr><td><code>command(name, fn)</code></td><td>new; how <code>/fork</code>, <code>/skills</code>, even <code>/help</code> exist</td></tr>
+  <tr><td><code>provider(name, factory)</code></td><td>new; anthropic/openai register this way too, so adding groq/local is a plugin</td></tr>
+  <tr><td><code>config(defaults)</code></td><td>new; declares keys merged into layering: plugin defaults &lt; user toml &lt; project toml &lt; <code>SCOUT_*</code> env &lt; CLI flags</td></tr>
+</table>
+
+<p>Worked example &mdash; a user plugin adding a provider, a command, and a tool:</p>
+
+<pre><code><span class="comment"># ~/.agents/plugins/deploy.py</span>
+from scout.tools import Tool
+
+def deploy_now(agent, rest): ...
+
+def scout(api):
+    api.provider("groq", lambda cfg: openai_compat(base_url="https://api.groq.com/openai/v1", cfg))
+    api.command("/deploy", deploy_now)
+    api.tool(Tool(name="deploy", description="Deploy the current branch.",
+                  parameters={...}, run=deploy))
+    api.on("tool.end", lambda name, **_: print(f"done: {name}"))
+    api.prompt("Deploy only when explicitly asked.")</code></pre>
+
+<p>v1's <code>examples/plugins/</code> are rewritten to this API in the rollout (&sect;12,
+phase 5).</p>
+
+<!-- ================================================================ -->
+<h2 id="builtin">8. Internal plugins</h2>
+
+<p><code>scout/builtin/</code> &mdash; one file per feature, loaded by an ordered manifest in
+<code>__init__.py</code>. Order matters twice: <code>session</code> subscribes before
+<code>display</code> (so projections are current when other subscribers observe events), and
+<code>config</code> loads first (its defaults seed layering).</p>
+
+<table>
+  <tr><th>#</th><th>Plugin</th><th>~LOC</th><th>Registers / does</th><th>v1 origin</th></tr>
+  <tr><td>1</td><td><code>config.py</code></td><td>70</td><td>declares all core config keys; resolves layering; emits <code>config.loaded</code></td><td>rewrite of <code>config.py</code> (provider validation now lives in the provider registry, not config)</td></tr>
+  <tr><td>2</td><td><code>session.py</code></td><td>180</td><td>owns <code>store.db</code>: appends events, runs the projector, exposes the <code>Session</code> view; provides <code>-c</code> resume; registers <code>/clear</code>, <code>/fork</code></td><td>replaces <code>session.py</code> + the rev-2 plan wholesale</td></tr>
+  <tr><td>3</td><td><code>providers/</code></td><td>240</td><td>anthropic + openai via <code>api.provider(...)</code>; wire code unchanged; anthropic inserts prompt-cache breakpoints (&sect;8.1)</td><td>move of <code>llm/</code> (implementations are survivors)</td></tr>
+  <tr><td>4</td><td><code>tools/</code></td><td>315</td><td>bash, read, write, edit, grep, glob, skill via <code>api.tool(...)</code></td><td>move of <code>tools/*.py</code> (survivors)</td></tr>
+  <tr><td>5</td><td><code>skills.py</code></td><td>60</td><td>SKILL.md discovery; feeds the <code>skill</code> tool and prompt</td><td>survivor</td></tr>
+  <tr><td>6</td><td><code>prompt.py</code></td><td>80</td><td>system-prompt assembly: identity, tool list, skills, environment, AGENTS.md, plugin paragraphs</td><td>rewrite of <code>context.py</code></td></tr>
+  <tr><td>7</td><td><code>display.py</code></td><td>45</td><td>subscribes to <code>tool.start/end</code>; prints what the agent is doing</td><td>extract of <code>display_hooks()</code> from <code>cli.py</code></td></tr>
+  <tr><td>8</td><td><code>commands.py</code></td><td>40</td><td><code>/help</code>, <code>/skills</code>, <code>/plugins</code></td><td>extract of <code>cli.py</code>'s command chain</td></tr>
+</table>
+
+<p>Each is deletable: remove <code>display</code> and scout goes quiet; remove
+<code>session</code> and it runs memory-only; remove <code>skills</code> and the
+<code>skill</code> tool and prompt section vanish together. That is the test of the
+inversion &mdash; and the difference from v1, where each of these was load-bearing in the core.</p>
+
+<h3>8.1 Prompt caching</h3>
+
+<p>OpenAI-compatible endpoints prefix-cache automatically, server-side &mdash; no markup,
+no code. Anthropic caching is opt-in, so <code>builtin/providers/anthropic.py</code>
+inserts <code>cache_control</code> breakpoints into its wire format (~25 lines: one on the
+system-prompt tail, one on the last block of the prior turn). That is the entire caching
+story: a wire-format concern inside one provider plugin. The kernel loop, the normalized
+message format, and the event store stay cache-agnostic, and hits are already guaranteed
+by the architecture's byte-stable prefix &mdash; system prompt built once, append-only
+message projection, deterministic tool ordering from the ordered manifest. No config keys,
+no usage tracking.</p>
+
+<!-- ================================================================ -->
+<h2 id="budget">9. Size budget</h2>
+
+<table>
+  <tr><th>Piece</th><th>~LOC</th><th>Status</th></tr>
+  <tr><td colspan="3"><strong>kernel (<code>scout/</code>)</strong></td></tr>
+  <tr><td><code>bus.py</code></td><td>30</td><td><span class="tag add">add</span></td></tr>
+  <tr><td><code>host.py</code></td><td>120</td><td><span class="tag add">add</span></td></tr>
+  <tr><td><code>agent.py</code></td><td>65</td><td><span class="tag modify">rewrite</span></td></tr>
+  <tr><td><code>cli.py</code></td><td>95</td><td><span class="tag modify">rewrite</span></td></tr>
+  <tr><td><code>tools.py</code> (Tool + Registry + Ctx)</td><td>75</td><td><span class="tag keep">keep</span> (from <code>tools/__init__.py</code>)</td></tr>
+  <tr><td><code>http.py</code></td><td>45</td><td><span class="tag keep">keep</span></td></tr>
+  <tr><td><code>errors.py</code></td><td>10</td><td><span class="tag keep">keep</span></td></tr>
+  <tr><td><strong>kernel total</strong></td><td><strong>~440</strong></td><td></td></tr>
+  <tr><td colspan="3"><strong>internal plugins (<code>scout/builtin/</code>)</strong></td></tr>
+  <tr><td>manifest + 8 plugins (&sect;8)</td><td>~1,035</td><td>mixed: survivors + rewrites</td></tr>
+  <tr><td><strong>total</strong></td><td><strong>~1,475</strong></td><td>v1: ~1,240</td></tr>
+</table>
+
+<p>The honest trade: ~200 more lines total buys a kernel that drops from 1,240
+must-read lines to ~440, and eight features that can each be read, replaced, or deleted in
+isolation. &ldquo;Read the source in an afternoon&rdquo; survives &mdash; the afternoon now
+ends at <code>builtin/</code>.</p>
+
+<!-- ================================================================ -->
+<h2 id="survivors">10. What survives, what dies</h2>
+
+<table>
+  <tr><th>v1</th><th>Fate</th></tr>
+  <tr><td><code>http.py</code></td><td><span class="tag keep">survives</span> &mdash; the entire network layer, untouched</td></tr>
+  <tr><td><code>llm/anthropic.py</code>, <code>llm/openai.py</code></td><td><span class="tag keep">survive</span> &mdash; wire code moves to <code>builtin/providers/</code> unchanged</td></tr>
+  <tr><td><code>tools/*.py</code> (7 tools)</td><td><span class="tag keep">survive</span> &mdash; implementations move to <code>builtin/tools/</code> unchanged</td></tr>
+  <tr><td><code>skills.py</code></td><td><span class="tag keep">survives</span> &mdash; moves to <code>builtin/</code></td></tr>
+  <tr><td><code>tools/__init__.py</code> (Tool/Registry/Ctx)</td><td><span class="tag keep">survives</span> &mdash; becomes kernel <code>tools.py</code></td></tr>
+  <tr><td><code>agent.py</code></td><td><span class="tag modify">rewritten</span> &mdash; loop logic ported, I/O inverted to bus events</td></tr>
+  <tr><td><code>cli.py</code></td><td><span class="tag modify">rewritten</span> &mdash; boot + REPL only; commands and display extracted</td></tr>
+  <tr><td><code>config.py</code></td><td><span class="tag modify">rewritten</span> as <code>builtin/config.py</code> &mdash; layering kept, hardcoded provider list dies</td></tr>
+  <tr><td><code>context.py</code></td><td><span class="tag modify">rewritten</span> as <code>builtin/prompt.py</code></td></tr>
+  <tr><td><code>plugins.py</code></td><td><span class="tag remove">dies</span> &mdash; <code>HOOKS</code> tuple, closed <code>PluginApi</code>, <code>emit()</code> helper replaced by <code>bus.py</code> + <code>host.py</code></td></tr>
+  <tr><td><code>session.py</code></td><td><span class="tag remove">dies</span> &mdash; JSONL store replaced by <code>builtin/session.py</code> event store</td></tr>
+  <tr><td>v1 external plugins (<code>api.register_tool</code>, closed hooks)</td><td><span class="tag remove">break</span> &mdash; greenfield decision; examples rewritten in phase 5</td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="repo">11. Repo layout</h2>
+
+<pre><code>scout/                              <span class="comment"># repo root</span>
+├── docs/
+│   └── plans/
+│       ├── architecture-plan.html  <span class="tag add">add</span> <span class="comment"># this document (rev 2)</span>
+│       └── &lt;date&gt;-&lt;branch&gt;.md        <span class="tag add">add</span> <span class="comment"># implementation plans, one per execution</span>
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                  <span class="tag add">add</span> <span class="comment"># pytest on push/PR, matrix 3.11–3.13 (see §13)</span>
+│       └── release.yml             <span class="tag add">add</span> <span class="comment"># tag v* → build sdist+wheel → PyPI via OIDC (see §13)</span>
+├── examples/
+│   ├── plugins/
+│   │   ├── hello.py                <span class="tag modify">modify</span> <span class="comment"># port to Plugin API v2</span>
+│   │   └── log_hook.py             <span class="tag modify">modify</span> <span class="comment"># port to Plugin API v2 (api.on("tool.end", ...))</span>
+│   └── skills/                     <span class="tag keep">keep</span>
+├── scout/                          <span class="comment"># THE KERNEL — nothing here knows about sqlite/toml/builtins</span>
+│   ├── bus.py                      <span class="tag add">add</span> <span class="comment"># emit/on; open vocabulary; error-isolated</span>
+│   ├── host.py                     <span class="tag add">add</span> <span class="comment"># boot; manifest + discovery; registries; 3 seams</span>
+│   ├── agent.py                    <span class="tag modify">rewrite</span> <span class="comment"># the loop as a pure emitter</span>
+│   ├── cli.py                      <span class="tag modify">rewrite</span> <span class="comment"># args, boot, REPL shell</span>
+│   ├── tools.py                    <span class="tag keep">keep</span> <span class="comment"># Tool, Registry, Ctx (from tools/__init__.py)</span>
+│   ├── http.py                     <span class="tag keep">keep</span>
+│   ├── errors.py                   <span class="tag keep">keep</span>
+│   └── builtin/                    <span class="comment"># INTERNAL PLUGINS — same API as user plugins</span>
+│       ├── __init__.py             <span class="tag add">add</span> <span class="comment"># ordered manifest (config→session→providers→tools→skills→prompt→display→commands)</span>
+│       ├── config.py               <span class="tag modify">rewrite</span>
+│       ├── session.py              <span class="tag add">add</span> <span class="comment"># store.db + projector + resume + /clear /fork</span>
+│       ├── providers/
+│       │   ├── __init__.py         <span class="tag modify">move</span> <span class="comment"># api.provider("anthropic"/"openai", ...)</span>
+│       │   ├── anthropic.py        <span class="tag keep">keep</span>
+│       │   └── openai.py           <span class="tag keep">keep</span>
+│       ├── tools/
+│       │   ├── __init__.py         <span class="tag modify">move</span> <span class="comment"># api.tool(...) registrations</span>
+│       │   ├── bash.py             <span class="tag keep">keep</span>
+│       │   └── ...                 <span class="tag keep">keep</span> <span class="comment"># read write edit grep glob skill</span>
+│       ├── skills.py               <span class="tag keep">keep</span>
+│       ├── prompt.py               <span class="tag modify">rewrite</span> <span class="comment"># from context.py</span>
+│       ├── display.py              <span class="tag add">add</span> <span class="comment"># from cli.py display_hooks()</span>
+│       └── commands.py             <span class="tag add">add</span> <span class="comment"># /help /skills /plugins</span>
+├── tests/                          <span class="comment"># rewritten alongside phases (see §13)</span>
+├── pyproject.toml                  <span class="tag keep">keep</span> <span class="comment"># still dependencies = []</span>
+├── LICENSE                         <span class="tag keep">keep</span>
+└── README.md                       <span class="tag modify">rewrite</span> <span class="comment"># new reading order: kernel → builtin → store</span></code></pre>
+
+<h3>Runtime locations (not in repo)</h3>
+<table>
+  <tr><th>Path</th><th>Written by</th><th>Purpose</th></tr>
+  <tr><td><code>~/.scout/store.db</code></td><td><code>builtin/session.py</code></td><td>events (truth) + messages (projection)</td></tr>
+  <tr><td><code>~/.agents/plugins/</code>, <code>./.agents/plugins/</code></td><td>user</td><td>external plugins (convention unchanged)</td></tr>
+  <tr><td><code>~/.agents/skills/</code>, <code>./.agents/skills/</code></td><td>user</td><td>skills (convention unchanged)</td></tr>
+  <tr><td><code>~/.config/scout/scout.toml</code>, <code>./scout.toml</code></td><td>user</td><td>config layers (unchanged)</td></tr>
+  <tr><td><code>&lt;cwd&gt;/.scout/</code> (v1 sessions, tool.log)</td><td>&mdash;</td><td>legacy; ignored, never read</td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="rollout">12. Rollout plan</h2>
+
+<p>Greenfield re-core on a single <code>v2</code> branch: build the new shape first, delete
+v1 last. Every phase ends with the suite green.</p>
+
+<table>
+  <tr><th>Phase</th><th>Delivers</th><th>Exit criterion</th></tr>
+  <tr>
+    <td><strong>1. Kernel</strong></td>
+    <td><code>bus.py</code>, <code>host.py</code>, <code>tools.py</code>, rewritten <code>agent.py</code>; agent runs against a fake in-memory session and fake client</td>
+    <td>loop tests pass; import-lint test proves kernel purity</td>
+  </tr>
+  <tr>
+    <td><strong>2. Store</strong></td>
+    <td><code>builtin/session.py</code>: schema, append, projector, <code>rebuild()</code>, resume-by-cwd, fork-by-event</td>
+    <td>projector determinism test (incremental == rebuild) passes; riskiest piece lands alone</td>
+  </tr>
+  <tr>
+    <td><strong>3. Ports</strong></td>
+    <td>survivors move: providers &rarr; <code>builtin/providers/</code> (+ anthropic cache markup, &sect;8.1), tools &rarr; <code>builtin/tools/</code>, skills &rarr; <code>builtin/skills.py</code>; <code>http.py</code> untouched in place</td>
+    <td>v1 provider/tool/skill tests pass against new locations</td>
+  </tr>
+  <tr>
+    <td><strong>4. Surface</strong></td>
+    <td><code>builtin/config.py</code>, <code>prompt.py</code>, <code>display.py</code>, <code>commands.py</code>; rewritten <code>cli.py</code> REPL with <code>-p</code> and <code>-c</code></td>
+    <td>manual parity walkthrough: every v1 CLI behavior works; <code>/fork</code> works</td>
+  </tr>
+  <tr>
+    <td><strong>5. Cleanup</strong></td>
+    <td>delete <code>plugins.py</code>, <code>session.py</code>, <code>context.py</code>, <code>config.py</code>, <code>llm/</code>; port <code>examples/plugins/</code> to API v2; rewrite README</td>
+    <td>full suite green; no v1 module remains; README reading order reflects &sect;5&rarr;&sect;8</td>
+  </tr>
+  <tr>
+    <td><strong>6. Release</strong></td>
+    <td>add <code>.github/workflows/ci.yml</code> + <code>release.yml</code> (&sect;13); register the trusted publisher on pypi.org; tag <code>v2.0.0</code></td>
+    <td>CI green on the v2 branch; tag push publishes <code>scout-agent</code> 2.0.0 to PyPI; <code>pip install scout-agent</code> works</td>
+  </tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="release">13. Release &amp; CI pipeline</h2>
+
+<p>Two small GitHub Actions workflows, both standard-shaped. Neither adds runtime
+dependencies &mdash; <code>build</code> and <code>pytest</code> are dev-time only, installed
+by the runner, never listed in <code>pyproject.toml</code> beyond the existing
+<code>[dev]</code> extra.</p>
+
+<h3><code>.github/workflows/ci.yml</code> — tests on every push and PR</h3>
+
+<pre><code>name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e .[dev]
+      - run: pytest -q</code></pre>
+
+<p>This is the enforcement story for &sect;14: kernel purity, projector determinism, and
+append-only store invariants run on every push, not just locally.</p>
+
+<h3><code>.github/workflows/release.yml</code> — tag push publishes to PyPI</h3>
+
+<pre><code>name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write   <span class="comment"># OIDC: no stored PyPI secrets</span>
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build && python -m build   <span class="comment"># sdist + wheel</span>
+      - uses: pypa/gh-action-pypi-publish@release/v1</code></pre>
+
+<ul>
+  <li><strong>Trigger:</strong> pushing a tag matching <code>v*</code> builds and publishes.
+      No manual dispatch, no UI step &mdash; <code>git tag v2.0.0 &amp;&amp; git push --tags</code>
+      is the whole release procedure.</li>
+  <li><strong>Auth:</strong> <a href="https://docs.pypi.org/trusted-publishers/">PyPI trusted
+      publishing</a> (OIDC). The workflow exchanges a GitHub-attested identity token for a
+      short-lived PyPI token; <strong>no API token is stored as a repo secret</strong>.</li>
+  <li><strong>One-time manual prerequisite</strong> (cannot be done from the repo): on
+      pypi.org &rarr; Publishing &rarr; add a trusted publisher for project
+      <code>scout-agent</code>, owner <code>dairycow</code>, workflow
+      <code>release.yml</code>, environment <em>(none)</em>. Until the project exists on
+      PyPI, the first release uses the pending-publisher flow (reserve the name, then
+      register the publisher).</li>
+  <li><strong>Version discipline:</strong> the tag must equal the
+      <code>version</code> field in <code>pyproject.toml</code> (first release:
+      <code>v2.0.0</code>). A mismatched tag is the only way to publish a wrong version;
+      the plan adds a tiny consistency check (assert tag == version) as the workflow's first
+      step rather than reaching for external action tooling.</li>
+  <li><strong>Artifacts:</strong> one sdist + one wheel from
+      <code>python -m build</code>; the package is pure-Python stdlib-only, so no platform
+      matrix is needed for publishing.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="tests">14. Test plan</h2>
+
+<p>All store tests monkeypatch the store root to a pytest <code>tmp_path</code>; nothing ever
+touches the real <code>~/.scout</code>. Fake clients as in v1 &mdash; the suite stays offline.</p>
+
+<h3>New invariants (the important ones)</h3>
+<table>
+  <tr><th>Test</th><th>Asserts</th></tr>
+  <tr>
+    <td><code>test_kernel_purity</code></td>
+    <td>no module under <code>scout/</code> (excluding <code>scout/builtin/</code>) imports
+        <code>sqlite3</code>, <code>tomllib</code>, or <code>builtin</code> except the three
+        declared seams; enforced by AST-walking the package</td>
+  </tr>
+  <tr>
+    <td><code>test_projector_determinism</code></td>
+    <td>after arbitrary event sequences (with forks and interleaved sessions),
+        <code>messages</code> table == <code>rebuild()</code> output, row for row</td>
+  </tr>
+  <tr>
+    <td><code>test_store_append_only</code></td>
+    <td>no code path ever issues UPDATE/DELETE on <code>events</code> (checked by asserting
+        every write goes through the single <code>append()</code> helper; plus a sqlite
+        trigger in a debug build rejects UPDATE/DELETE &mdash; belt and suspenders)</td>
+  </tr>
+  <tr>
+    <td><code>test_bus_error_isolation</code></td>
+    <td>a raising subscriber is reported, does not block later subscribers, does not raise into the loop</td>
+  </tr>
+  <tr>
+    <td><code>test_host_override_by_name</code></td>
+    <td>a user plugin re-registering <code>bash</code> or <code>/help</code> wins over the builtin</td>
+  </tr>
+</table>
+
+<h3>Behavioral tests (ported/added)</h3>
+<table>
+  <tr><th>Test</th><th>Asserts</th></tr>
+  <tr><td><code>test_loop_events</code></td><td>one <code>user -c</code> run with a fake client emits the exact message.*/tool.* sequence with expected payloads</td></tr>
+  <tr><td><code>test_resume_latest_by_cwd</code></td><td>newest matching <code>session.start</code>/<code>session.fork</code> wins; decoy cwds ignored; no match &rarr; None</td></tr>
+  <tr><td><code>test_fork_prefix</code></td><td><code>/fork</code> with and without <code>at_n</code>: projection inherits exactly the prefix; parent rows immutable; appending to the fork never touches the parent</td></tr>
+  <tr><td><code>test_provider_registration</code></td><td>a plugin-registered provider is selectable via config and produces the client</td></tr>
+  <tr><td><code>test_config_layering</code></td><td>plugin defaults &lt; toml &lt; env &lt; flags, including keys declared by plugins</td></tr>
+  <tr><td><code>test_commands_registered</code></td><td>REPL dispatch resolves every command from the registry; unknown commands report gracefully</td></tr>
+</table>
+
+<h3>Manual smoke</h3>
+<pre><code>pytest -q
+python - &lt;&lt;'EOF'                       <span class="comment"># end-to-end: boot, run, fork, resume, rebuild</span>
+from pathlib import Path
+from scout.host import boot
+rt = boot(Path.cwd(), {"prompt": None, "resume": False})
+rt.agent.run("list the files in this repo")
+rt.commands["/fork"](rt.agent, "")
+r2 = boot(Path.cwd(), {"prompt": None, "resume": True})
+assert r2.session.messages                      <span class="comment"># resumed from store.db</span>
+from scout.builtin.session import rebuild
+rebuild(r2.store)                               <span class="comment"># projection is rebuildable</span>
+print("ok", r2.session.id)
+EOF</code></pre>
+
+<!-- ================================================================ -->
+<h2 id="decisions">15. Decisions &amp; non-goals</h2>
+
+<h3>Decision log (user-confirmed)</h3>
+<ul class="decisions">
+  <li><strong>Greenfield re-core, same repo.</strong> No compatibility with v1 internals or the v1 external plugin API; built on one branch, v1 deleted at phase 5. The product surface (REPL, <code>-p</code>, <code>-c</code>) is preserved.</li>
+  <li><strong>Full inversion.</strong> Kernel = bus + host + loop + shell + tool registry + HTTP (~440 lines). Config, providers, tools, skills, sessions, prompt, display, commands are all internal plugins on the same <code>PluginApi</code> as user plugins.</li>
+  <li><strong>Events are the source of truth.</strong> Single append-only SQLite <code>events</code> table at <code>~/.scout/store.db</code>; <code>messages</code> is a projection with a deterministic projector; fork is a projector rule; resume is a query. Supersedes rev-2's dual-file design.</li>
+  <li><strong>Stdlib-only stays.</strong> <code>dependencies = []</code> unchanged; <code>sqlite3</code>/<code>tomllib</code> qualify.</li>
+  <li><strong><code>.agents/</code> convention stays.</strong> Plugins and skills keep loading from the shared cross-tool directories, project overriding user.</li>
+  <li><strong>v1 sessions ignored.</strong> No migration, no fallback read (carried over from rev 2).</li>
+  <li><strong>Loop is a pure emitter.</strong> The agent never touches the store or the filesystem; even message persistence is a bus subscription owned by the session plugin.</li>
+  <li><strong>Three declared seams.</strong> Host imports <code>open_session</code>, <code>build_prompt</code>, <code>load_skills</code> from builtins &mdash; the only kernel&rarr;builtin coupling; pinned by an import-lint test.</li>
+  <li><strong>CI on every push/PR.</strong> <code>ci.yml</code> runs <code>pytest -q</code> on a 3.11&ndash;3.13 matrix; the invariant tests of &sect;14 are release gates, not local courtesies.</li>
+  <li><strong>Releases are tag pushes.</strong> <code>v*</code> tag &rarr; build sdist+wheel &rarr; publish to PyPI; tag must equal <code>pyproject.toml</code>'s version; first release is <code>v2.0.0</code>.</li>
+  <li><strong>OIDC trusted publishing, no stored secrets.</strong> <code>id-token: write</code> + <code>pypa/gh-action-pypi-publish</code>; no <code>PYPI_API_TOKEN</code> in repo secrets; one-time publisher registration on pypi.org is the only manual step.</li>
+  <li><strong>Build tooling is dev-time only.</strong> <code>build</code>/<code>pytest</code> are installed by runners (or the <code>[dev]</code> extra); <code>dependencies = []</code> is untouched.</li>
+</ul>
+
+<h3>Non-goals (deliberately out of scope)</h3>
+<ul class="decisions">
+  <li>opencode2's scale: no 68 plugins, no server/client split, no multi-session concurrency, no TUI framework (plain <code>print</code>/<code>input</code> stays)</li>
+  <li>Event-sourcing machinery beyond the 40-line projector: sequence-number APIs, context epochs, compaction checkpoints, staged reverts &mdash; though the event schema leaves room (<code>seq</code> makes a future <code>context.compacted</code> projection rule cheap)</li>
+  <li>SQLite FTS/search UI over sessions; cloud sync; permission prompts; MCP; LSP</li>
+  <li>Config UI beyond toml/env/flags; no <code>sessions_dir</code> override (hardcoded, per rev-2 decision)</li>
+</ul>
+<p>Every non-goal can layer on later without format changes: the store is append-only and
+projection is rebuildable, the bus vocabulary is open, and built-ins are plugins &mdash;
+which is the whole point of the redesign.</p>
+
+<footer>
+  scout-agent &middot; v2 architecture plan &middot; rev 2, 2026-08-23 &middot;
+  references: opencode2 architecture (thdxr:
+  <a href="https://bsky.app/profile/thdxr.com/post/3msy4gjttoc2f">internal plugins</a>,
+  <a href="https://bsky.app/profile/thdxr.com/post/3mt2qx3ktib2c">event sourcing</a>;
+  <a href="https://news.ycombinator.com/item?id=49354348">HN discussion</a>);
+  pi (<a href="https://github.com/badlogic/pi-mono">badlogic/pi-mono</a>);
+  GitHub Copilot CLI chronicle docs; jonmagic.com session-state writeup;
+  supersedes and removes docs/sessions-plan.html (rev 2)
+</footer>
+
+</main>
+</body>
+</html>
