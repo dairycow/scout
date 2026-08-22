@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scout.errors import ScoutError
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
   seq     INTEGER PRIMARY KEY,
@@ -161,8 +163,9 @@ def open_session(cwd, config, resume: bool) -> Session:
             "ORDER BY seq DESC LIMIT 1",
             (str(cwd),),
         ).fetchone()
-        if row:
-            sid = row[0]
+        if not row:
+            raise ScoutError("no previous session found in this directory")
+        sid = row[0]
     if sid is None:
         sid = uuid.uuid4().hex
         _view = Session(sid, [])

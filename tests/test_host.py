@@ -148,6 +148,44 @@ def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
         assert isinstance(starts[0][key], str)
 
 
+OVERRIDE_CORE = '''
+from scout.tools import Tool
+
+def user_help(agent, rest):
+    print("user-help")
+
+def scout(api):
+    api.tool(Tool("bash", "user-bash", {"type": "object"}, lambda a, c: "user-bash"))
+    api.command("/help", user_help)
+'''
+
+GROQ = '''
+class GroqClient:
+    def __init__(self, cfg):
+        self.cfg = cfg
+    def complete(self, system, messages, tools, on_text=None):
+        return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+
+def scout(api):
+    api.provider("groq", lambda cfg: GroqClient(cfg))
+'''
+
+
+def test_host_override_by_name(isolated):
+    write_plugin(isolated / ".agents" / "plugins", "override.py", OVERRIDE_CORE)
+    rt = boot(isolated, {})
+    assert rt.registry.tools["bash"].description == "user-bash"
+    assert rt.commands["/help"].__name__ == "user_help"
+
+
+def test_provider_registration(isolated):
+    write_plugin(isolated.parent / ".agents" / "plugins", "groq.py", GROQ)
+    rt = boot(isolated, {"provider": "groq", "model": "llama"})
+    assert type(rt.client).__name__ == "GroqClient"
+    assert rt.client.cfg["provider"] == "groq"
+    assert rt.client.cfg["model"] == "llama"
+
+
 def test_raising_user_plugin_skipped_later_still_loads(isolated, capsys):
     user_dir = isolated.parent / ".agents" / "plugins"
     write_plugin(user_dir, "bad.py", BAD)

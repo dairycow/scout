@@ -17,6 +17,7 @@ from scout.builtin.session import (
     reset,
     scout,
 )
+from scout.errors import ScoutError
 from scout.tools import Ctx
 
 
@@ -195,7 +196,10 @@ def test_resume_latest_by_cwd(home):
     assert decoy.id == s2.id
     assert decoy.messages[0]["content"][0]["text"] == "decoy"
 
-    fresh = open_session(c, {}, True)
+    with pytest.raises(ScoutError, match="no previous session found"):
+        open_session(c, {}, True)
+
+    fresh = open_session(c, {}, False)
     assert fresh.id not in {s1.id, s2.id, s3.id, fork_id}
     assert fresh.messages == []
     assert len(fresh.id) == 32
