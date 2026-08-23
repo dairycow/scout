@@ -53,6 +53,8 @@ def test_defaults(env):
     assert rt.config["max_tokens"] == 16384
     assert rt.config["max_turns"] == 40
     assert rt.config["timeout"] == 300
+    assert rt.config["retries"] == 2
+    assert rt.config["parallel_tools"] is True
     assert rt.config["flavor"] == "from-plugin"
     assert rt.config["api_key"] == ""
     assert rt.config["base_url"] == ""

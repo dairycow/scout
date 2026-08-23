@@ -1,5 +1,7 @@
 """Tests for the agent loop, using a scripted fake client."""
 
+import time
+
 from scout.agent import Agent
 from scout.bus import Bus
 from scout.tools import Ctx, Registry, Tool
@@ -31,7 +33,7 @@ class MemorySession:
         self.messages = []
 
 
-def make_agent(tmp_path, replies, max_turns=10, usage=None):
+def make_agent(tmp_path, replies, max_turns=10, usage=None, config=None):
     seen = []
 
     def record(args, ctx):
@@ -40,7 +42,10 @@ def make_agent(tmp_path, replies, max_turns=10, usage=None):
 
     registry = Registry()
     registry.register(Tool("run", "test tool", {"type": "object"}, record))
-    ctx = Ctx(cwd=tmp_path, config={"max_turns": max_turns}, skills={})
+    cfg = {"max_turns": max_turns}
+    if config:
+        cfg.update(config)
+    ctx = Ctx(cwd=tmp_path, config=cfg, skills={})
     bus = Bus()
     session = MemorySession()
 
@@ -129,6 +134,74 @@ def test_max_turns_guard(tmp_path):
     out = agent.run("loop forever")
     assert "stopped after 3 turns" in out
     assert len(agent.client.calls) == 3
+
+
+def test_parallel_tool_calls_run_concurrently(tmp_path):
+    def slow(args, ctx):
+        time.sleep(args["seconds"])
+        return f"ran {args['seconds']}"
+
+    agent, _ = make_agent(tmp_path, [
+        [call("a", {"seconds": 0.5}), call("b", {"seconds": 0.05})],
+        [text("done")],
+    ], config={"parallel_tools": True})
+    agent.registry.register(Tool("run", "test tool", {"type": "object"}, slow))
+    events = []
+    agent.bus.on("*", lambda type, **data: events.append((type, data)))
+
+    start = time.monotonic()
+    agent.run("go")
+    elapsed = time.monotonic() - start
+    assert elapsed < 0.9  # serial would be sum=0.55; parallel is max=0.5
+
+    # the API sees call order, always
+    results = agent.session.messages[2]["content"]
+    assert [r["tool_use_id"] for r in results] == ["a", "b"]
+    assert [r["content"] for r in results] == ["ran 0.5", "ran 0.05"]
+    # tool.start in call order, tool.end in completion order
+    starts = [data["args"]["seconds"] for t, data in events if t == "tool.start"]
+    ends = [data["args"]["seconds"] for t, data in events if t == "tool.end"]
+    assert starts == [0.5, 0.05]
+    assert ends == [0.05, 0.5]
+
+
+def test_kill_switch_runs_tools_serially(tmp_path):
+    def slow(args, ctx):
+        time.sleep(args["seconds"])
+        return "ok"
+
+    agent, _ = make_agent(tmp_path, [
+        [call("a", {"seconds": 0.4}), call("b", {"seconds": 0.4})],
+        [text("done")],
+    ], config={"parallel_tools": False})
+    agent.registry.register(Tool("run", "test tool", {"type": "object"}, slow))
+    events = []
+    agent.bus.on("*", lambda type, **data: events.append((type, data)))
+
+    start = time.monotonic()
+    agent.run("go")
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.8  # sum, not max
+    ends = [data["args"]["seconds"] for t, data in events if t == "tool.end"]
+    assert ends == [0.4, 0.4]  # call order throughout
+
+
+def test_parallel_tool_errors_feed_back(tmp_path):
+    def flaky(args, ctx):
+        if args["fail"]:
+            raise ValueError("kaput")
+        return "ok"
+
+    agent, _ = make_agent(tmp_path, [
+        [call("a", {"fail": True}), call("b", {"fail": False})],
+        [text("recovered")],
+    ], config={"parallel_tools": True})
+    agent.registry.register(Tool("run", "test tool", {"type": "object"}, flaky))
+
+    assert agent.run("go") == "recovered"
+    results = {r["tool_use_id"]: r for r in agent.session.messages[2]["content"]}
+    assert results["a"]["is_error"] is True and "kaput" in results["a"]["content"]
+    assert results["b"]["is_error"] is False
 
 
 def test_usage_emitted_after_message_assistant(tmp_path):

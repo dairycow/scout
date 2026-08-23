@@ -119,7 +119,12 @@ def boot(cwd: Path, cli: dict) -> Runtime:
         raw = os.environ.get("SCOUT_" + key.upper())
         if not raw:
             continue
-        if isinstance(config[key], int):
+        if isinstance(config[key], bool):  # before int: bool is an int subclass
+            lowered = raw.lower()
+            if lowered not in ("true", "false", "1", "0"):
+                raise ScoutError(f"SCOUT_{key.upper()} must be true or false")
+            raw = lowered in ("true", "1")
+        elif isinstance(config[key], int):
             try:
                 raw = int(raw)
             except ValueError:

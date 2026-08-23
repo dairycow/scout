@@ -24,6 +24,7 @@ DEFAULTS = {
     "max_turns": 40,
     "timeout": 300,
     "retries": 2,
+    "parallel_tools": True,
 }
 
 

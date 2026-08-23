@@ -99,6 +99,20 @@ def test_env_override_int_coercion(isolated, monkeypatch):
         boot(isolated, {})
 
 
+def test_env_override_bool_coercion(isolated, monkeypatch):
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "false")
+    rt = boot(isolated, {})
+    assert rt.config["parallel_tools"] is False
+
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "TRUE")
+    rt = boot(isolated, {})
+    assert rt.config["parallel_tools"] is True
+
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "banana")
+    with pytest.raises(ScoutError, match="true or false"):
+        boot(isolated, {})
+
+
 def test_plugin_loaded_events_fired(isolated):
     rt = boot(isolated, {})
     for name in MANIFEST:

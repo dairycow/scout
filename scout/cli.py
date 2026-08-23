@@ -32,6 +32,8 @@ def parse_args(argv=None):
     parser.add_argument("--max-tokens", type=int)
     parser.add_argument("--retries", type=int,
                         help="retry transient HTTP failures this many times (default 2)")
+    parser.add_argument("--no-parallel-tools", action="store_true",
+                        help="run tool calls one at a time instead of in parallel")
     parser.add_argument("-V", "--version", action="version",
                         version=f"scout {__version__}")
     return parser.parse_args(argv)
@@ -54,6 +56,7 @@ def main(argv=None) -> int:
         "max_turns": args.max_turns,
         "max_tokens": args.max_tokens,
         "retries": args.retries,
+        "parallel_tools": False if args.no_parallel_tools else None,
         "prompt": prompt,
         "resume": args.resume,
     }
