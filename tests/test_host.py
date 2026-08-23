@@ -124,7 +124,7 @@ def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
     assert MANIFEST.index("session") < MANIFEST.index("display")
     assert MANIFEST == [
         "config", "session", "providers", "tools",
-        "skills", "prompt", "display", "commands", "readline",
+        "skills", "prompt", "display", "statusline", "commands", "readline",
     ]
 
     events = []
