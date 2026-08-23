@@ -160,3 +160,18 @@ def test_cache_control_does_not_mutate_caller_or_return(client):
     assert messages == snapshot
     assert "cache_control" not in json.dumps(message)
     assert "cache_control" not in json.dumps(messages)
+
+
+def test_cache_control_is_o1_earlier_messages_shared(client):
+    """The tail copy must not clone the rest of the history — pins the
+    O(1) request build against regression to a full deepcopy."""
+    messages = copy.deepcopy(HISTORY)
+    client.events = [{"type": "message_stop"}]
+    client.complete("sys", messages, [])
+
+    sent = client.payload["messages"]
+    assert len(sent) == len(messages)
+    for earlier, mine in zip(sent[:-1], messages[:-1]):
+        assert earlier is mine
+    assert sent[-1] is not messages[-1]  # only the tail is fresh
+    assert sent[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}

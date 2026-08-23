@@ -64,11 +64,19 @@ ceiling from 2026-08-23-perf.md is spent).
 
 ## Out of scope
 
-- C — `_with_cache_control` deep-copies full history per request
-  (`builtin/providers/anthropic.py:23`); O(history) client CPU per
-  turn. Value-test pinned by two existing tests; deferred.
 - B — request-side compaction of old `tool_result` bodies.
 - `MAX_OUTPUT` tightening.
+
+## C — O(1) `_with_cache_control` (done 2026-08-24, review follow-up)
+
+The deep-copy of full history per request was replaced with a
+constant-size tail copy: only the last message dict, its content list,
+and its last block are freshened (with the `cache_control` marker);
+earlier message dicts are shared — history is append-only, so they are
+never mutated afterwards. `import copy` dropped from the provider.
+Value semantics stay pinned by the two existing tests; a new identity
+test (`sent[:-1] is messages[:-1]`) pins the O(1) property against
+regression to a deepcopy.
 
 ## Invariants
 
@@ -80,4 +88,6 @@ ceiling from 2026-08-23-perf.md is spent).
 
 ## Final status
 
-(to fill at merge)
+Shipped: A (per-line caps) + C (O(1) cache_control tail copy). B
+rejected on session evidence (95% cache hit; nothing to reclaim).
+Suite 126 passed offline; ruff clean; kernel purity green.

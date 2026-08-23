@@ -5,7 +5,6 @@ The normalized message format is already Anthropic's, so requests pass
 through untouched; only the SSE stream needs assembling.
 """
 
-import copy
 import json
 
 from scout.errors import ScoutError
@@ -19,11 +18,16 @@ def to_anthropic(messages: list) -> list:
 
 
 def _with_cache_control(messages: list) -> list:
-    """Deep-copy messages and mark the last block of the last message."""
-    out = copy.deepcopy(messages)
-    if out and out[-1].get("content"):
-        out[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
-    return out
+    """Copy only the tail; mark the last block of the last message.
+
+    O(1) regardless of history length: earlier message dicts are shared
+    (history is append-only, so they are never mutated afterwards).
+    """
+    if not messages or not messages[-1].get("content"):
+        return messages
+    last = messages[-1]
+    block = {**last["content"][-1], "cache_control": {"type": "ephemeral"}}
+    return messages[:-1] + [{**last, "content": last["content"][:-1] + [block]}]
 
 
 class AnthropicClient:
