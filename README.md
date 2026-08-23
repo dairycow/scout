@@ -32,7 +32,7 @@ Kernel first, then builtins, then the store. The afternoon ends at
 | 2 | `scout/host.py` | 140 | boot, PluginApi, registries, three seams |
 | 3 | `scout/agent.py` | 60 | the loop as a pure emitter |
 | 4 | `scout/cli.py` | 110 | args, REPL shell, `-p` / `-c` |
-| 5 | `scout/builtin/` | ~1,000 | 8 internal plugins, one file each, deletable |
+| 5 | `scout/builtin/` | ~1,000 | 9 internal plugins, one file each, deletable |
 | 6 | `scout/builtin/session.py` | 210 | append-only events + projection; fork/resume as queries |
 
 The rest of the kernel is `tools.py` (Tool / Registry / Ctx), `http.py`
@@ -208,7 +208,7 @@ projection equals `rebuild()`, row for row) are release gates.
 
 ```
 scout/            the kernel (start in bus.py)
-scout/builtin/    8 internal plugins, same API as user plugins
+scout/builtin/    9 internal plugins, same API as user plugins
 tests/            offline test suite (fake clients, no network)
 examples/plugins/ hello tool, tool logger (Plugin API v2)
 examples/skills/  commit skill
