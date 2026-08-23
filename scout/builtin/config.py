@@ -23,6 +23,7 @@ DEFAULTS = {
     "max_tokens": 16384,
     "max_turns": 40,
     "timeout": 300,
+    "retries": 2,
 }
 
 

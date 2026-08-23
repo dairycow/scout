@@ -30,6 +30,8 @@ def parse_args(argv=None):
     parser.add_argument("--api-key")
     parser.add_argument("--max-turns", type=int)
     parser.add_argument("--max-tokens", type=int)
+    parser.add_argument("--retries", type=int,
+                        help="retry transient HTTP failures this many times (default 2)")
     parser.add_argument("-V", "--version", action="version",
                         version=f"scout {__version__}")
     return parser.parse_args(argv)
@@ -51,6 +53,7 @@ def main(argv=None) -> int:
         "api_key": args.api_key,
         "max_turns": args.max_turns,
         "max_tokens": args.max_tokens,
+        "retries": args.retries,
         "prompt": prompt,
         "resume": args.resume,
     }

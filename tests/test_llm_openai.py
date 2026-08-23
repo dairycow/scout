@@ -49,7 +49,7 @@ def chunks_of(*deltas):
 
 @pytest.fixture
 def client(monkeypatch):
-    def fake_post_sse(url, headers, payload, timeout):
+    def fake_post_sse(url, headers, payload, timeout, retries=2):
         assert url == "https://api.openai.com/v1/chat/completions"
         assert headers["Authorization"].startswith("Bearer ")
         if payload.get("tools"):

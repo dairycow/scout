@@ -18,7 +18,7 @@ CFG = {"model": "claude-sonnet-4-5", "max_tokens": 64, "base_url": "", "timeout"
 
 @pytest.fixture
 def client(monkeypatch):
-    def fake_post_sse(url, headers, payload, timeout):
+    def fake_post_sse(url, headers, payload, timeout, retries=2):
         assert url == "https://api.anthropic.com/v1/messages"
         assert headers["x-api-key"] == "k"
         assert payload["system"][0]["text"] == "sys"

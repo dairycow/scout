@@ -7,8 +7,6 @@ assistant message with no tool calls, so long tool loops stay quiet).
 Same stream flip as `display.py`: one-way to stderr in `-p` mode.
 """
 
-import sys
-
 from .display import _stream, _set_stderr
 
 _DIM = "\x1b[2m"

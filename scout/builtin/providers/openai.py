@@ -83,7 +83,8 @@ class OpenAIClient:
         text_parts: list[str] = []
         calls: dict[int, dict] = {}  # tool_call index -> {"id", "name", "args": [parts]}
         for chunk in post_sse(
-            f"{self.base_url}/chat/completions", headers, payload, self.cfg["timeout"]
+            f"{self.base_url}/chat/completions", headers, payload, self.cfg["timeout"],
+            retries=self.cfg.get("retries", 2),
         ):
             if chunk.get("error"):
                 raise ScoutError(f"openai stream error: {chunk['error']}")

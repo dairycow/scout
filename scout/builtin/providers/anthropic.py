@@ -61,7 +61,8 @@ class AnthropicClient:
         blocks: list[dict] = []
         json_buffers: dict[int, list[str]] = {}  # block index -> tool input parts
         for event in post_sse(
-            f"{self.base_url}/v1/messages", headers, payload, self.cfg["timeout"]
+            f"{self.base_url}/v1/messages", headers, payload, self.cfg["timeout"],
+            retries=self.cfg.get("retries", 2),
         ):
             etype = event.get("type")
             if etype == "content_block_start":
