@@ -39,13 +39,13 @@ def test_noop_when_stdin_not_a_tty(monkeypatch):
     assert fake.binds == []
 
 
-def test_libedit_uses_bind_syntax(monkeypatch):
+def test_libedit_uses_native_command_names(monkeypatch):
     fake = FakeReadline("libedit line editing emulation")
     monkeypatch.setitem(sys.modules, "readline", fake)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     readline_plugin.scout(None)
-    assert "bind ^[[1;5D backward-word" in fake.binds
-    assert "bind ^[OC forward-word" in fake.binds
+    assert "bind ^[[1;5D ed-prev-word" in fake.binds
+    assert "bind ^[OC em-next-word" in fake.binds
 
 
 def test_missing_readline_is_silent(monkeypatch):

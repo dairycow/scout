@@ -3,17 +3,22 @@
 input() only line-edits if readline is imported first, and terminfo
 (notably under tmux) often lacks kLFT5/kRIT5, so Ctrl+Left and
 Ctrl+Right are bound explicitly. Skipped when stdin is not a tty.
+
+libedit (uv-managed Pythons, macOS) uses `bind ^[... cmd` syntax and
+its own command names — no backward-word/forward-word — so each
+sequence carries a GNU and a libedit command.
 """
 
 import sys
 
+ESC = "\\e"
 SEQUENCES = [
-    ("\\e[1;5D", "backward-word"),
-    ("\\e[1;5C", "forward-word"),
-    ("\\e[5D", "backward-word"),
-    ("\\e[5C", "forward-word"),
-    ("\\eOD", "backward-word"),
-    ("\\eOC", "forward-word"),
+    ("\\e[1;5D", "backward-word", "ed-prev-word"),
+    ("\\e[1;5C", "forward-word", "em-next-word"),
+    ("\\e[5D", "backward-word", "ed-prev-word"),
+    ("\\e[5C", "forward-word", "em-next-word"),
+    ("\\eOD", "backward-word", "ed-prev-word"),
+    ("\\eOC", "forward-word", "em-next-word"),
 ]
 
 
@@ -25,9 +30,8 @@ def scout(api) -> None:
     except ImportError:
         return
     libedit = "libedit" in (readline.__doc__ or "")
-    ESC = "\\e"
-    for seq, cmd in SEQUENCES:
+    for seq, gnu, bsd in SEQUENCES:
         if libedit:
-            readline.parse_and_bind("bind " + seq.replace(ESC, "^[") + " " + cmd)
+            readline.parse_and_bind("bind " + seq.replace(ESC, "^[") + " " + bsd)
         else:
-            readline.parse_and_bind('"' + seq + '": ' + cmd)
+            readline.parse_and_bind('"' + seq + '": ' + gnu)
