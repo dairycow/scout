@@ -15,7 +15,7 @@ from scout.tools import Tool
 class FakeClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):
@@ -124,7 +124,7 @@ def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
     assert MANIFEST.index("session") < MANIFEST.index("display")
     assert MANIFEST == [
         "config", "session", "providers", "tools",
-        "skills", "prompt", "display", "statusline", "commands", "readline",
+        "skills", "prompt", "display", "statusline", "usage", "commands", "readline",
     ]
 
     events = []
@@ -162,7 +162,7 @@ GROQ = '''
 class GroqClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):

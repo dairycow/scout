@@ -12,7 +12,7 @@ class FakeClient:
         self.cfg = cfg
         self.replies = []
         self.i = 0
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         if not self.replies:
             return {"role": "assistant",
                     "content": [{"type": "text", "text": "ok"}]}
@@ -97,7 +97,7 @@ def test_stderr_flip_keeps_stdout_clean(capsys, rt):
 def test_streamed_answer_gets_leading_newline(capsys, rt):
     streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}
 
-    def complete(system, messages, tools, on_text=None):
+    def complete(system, messages, tools, on_text=None, on_usage=None):
         if on_text:
             on_text("hi")  # streamed; cursor left mid-line
         return streamed
@@ -111,7 +111,7 @@ def test_streamed_answer_gets_leading_newline(capsys, rt):
 def test_newline_omitted_after_trailing_newline(capsys, rt):
     streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi\n"}]}
 
-    def complete(system, messages, tools, on_text=None):
+    def complete(system, messages, tools, on_text=None, on_usage=None):
         if on_text:
             on_text("hi\n")  # answer already ended the line
         return streamed

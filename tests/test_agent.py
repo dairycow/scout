@@ -8,12 +8,15 @@ from scout.tools import Ctx, Registry, Tool
 class FakeClient:
     """complete() pops one scripted reply; records what it was called with."""
 
-    def __init__(self, replies):
+    def __init__(self, replies, usage=None):
         self.replies = list(replies)
+        self.usage = usage
         self.calls = []
 
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         self.calls.append({"system": system, "messages": list(messages), "tools": tools})
+        if on_usage and self.usage is not None:
+            on_usage(dict(self.usage))
         reply = self.replies.pop(0)
         if on_text:
             for block in reply:
@@ -28,7 +31,7 @@ class MemorySession:
         self.messages = []
 
 
-def make_agent(tmp_path, replies, max_turns=10):
+def make_agent(tmp_path, replies, max_turns=10, usage=None):
     seen = []
 
     def record(args, ctx):
@@ -46,7 +49,7 @@ def make_agent(tmp_path, replies, max_turns=10):
 
     bus.on("message.user", persist)
     bus.on("message.assistant", persist)
-    agent = Agent(FakeClient(replies), registry, "system prompt", session, ctx, bus)
+    agent = Agent(FakeClient(replies, usage), registry, "system prompt", session, ctx, bus)
     return agent, seen
 
 
@@ -126,6 +129,17 @@ def test_max_turns_guard(tmp_path):
     out = agent.run("loop forever")
     assert "stopped after 3 turns" in out
     assert len(agent.client.calls) == 3
+
+
+def test_usage_emitted_after_message_assistant(tmp_path):
+    usage = {"input_tokens": 12, "output_tokens": 3,
+             "cache_read_input_tokens": 400, "cache_creation_input_tokens": 40}
+    agent, _ = make_agent(tmp_path, [[text("ok")]], usage=usage)
+    events = []
+    agent.bus.on("*", lambda type, **data: events.append((type, data)))
+    agent.run("hi")
+    assert [t for t, _ in events] == ["message.user", "message.assistant", "usage"]
+    assert events[2] == ("usage", {"model": "", **usage})
 
 
 def test_loop_events(tmp_path):

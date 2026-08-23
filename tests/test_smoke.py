@@ -15,7 +15,7 @@ class FakeClient:
         self.cfg = cfg
         self.n = 0
 
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         self.n += 1
         if self.n == 1:
             return {"role": "assistant", "content": [

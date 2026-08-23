@@ -93,6 +93,38 @@ HISTORY = [
 ]
 
 
+def test_usage_normalized_with_cache_fields(client):
+    client.events = [
+        {"type": "message_start", "message": {"usage": {
+            "input_tokens": 100, "cache_read_input_tokens": 500,
+            "cache_creation_input_tokens": 50, "output_tokens": 1,
+        }}},
+        START_TEXT,
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "text_delta", "text": "Hi"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+         "usage": {"output_tokens": 34}},
+        {"type": "message_stop"},
+    ]
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert got == [{
+        "input_tokens": 100, "output_tokens": 34,
+        "cache_read_input_tokens": 500, "cache_creation_input_tokens": 50,
+    }]
+
+
+def test_usage_zeroed_when_stream_carries_none(client):
+    client.events = [{"type": "message_stop"}]
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert got == [{
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }]
+
+
 def test_cache_control_on_system_and_last_block(client):
     messages = copy.deepcopy(HISTORY)
     client.events = [{"type": "message_stop"}]

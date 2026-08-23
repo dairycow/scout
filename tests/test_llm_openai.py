@@ -89,6 +89,30 @@ def test_stream_without_tools_omits_tools_key(client):
     assert message["content"] == [{"type": "text", "text": "hi"}]
 
 
+def test_usage_requested_and_normalized(client):
+    client.events = chunks_of({"content": "hi"}) + [
+        {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 4,
+                                  "prompt_tokens_details": {"cached_tokens": 6}}},
+    ]
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert client.payload["stream_options"] == {"include_usage": True}
+    assert got == [{
+        "input_tokens": 10, "output_tokens": 4,
+        "cache_read_input_tokens": 6, "cache_creation_input_tokens": 0,
+    }]
+
+
+def test_usage_zeroed_when_server_sends_none(client):
+    client.events = chunks_of({"content": "hi"})
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert got == [{
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }]
+
+
 def test_malformed_tool_arguments_become_empty_input(client):
     client.events = chunks_of(
         {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "bash",

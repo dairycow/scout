@@ -12,7 +12,8 @@ message.* / tool.* events.
 
 class Agent:
     def __init__(self, client, registry, system, session, ctx, bus):
-        self.client = client          # llm client: complete(system, messages, tools, on_text)
+        self.client = client          # llm client: complete(system, messages, tools,
+                                      #                         on_text, on_usage)
         self.registry = registry      # tool registry
         self.system = system          # system prompt (built once, never mutated)
         self.session = session        # read-only view; session plugin keeps it current
@@ -27,10 +28,16 @@ class Agent:
         )
         n = self.ctx.config["max_turns"]
         for turn in range(n):
+            usage: list[dict] = []
             message = self.client.complete(
-                self.system, self.session.messages, self.registry.schemas(), on_text
+                self.system, self.session.messages, self.registry.schemas(), on_text,
+                on_usage=usage.append,
             )
             self.bus.emit("message.assistant", message=message, turn=turn + 1)
+            if usage:
+                self.bus.emit(
+                    "usage", model=self.ctx.config.get("model", ""), **usage[0]
+                )
 
             calls = [b for b in message["content"] if b["type"] == "tool_use"]
             if not calls:

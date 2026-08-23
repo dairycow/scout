@@ -32,7 +32,8 @@ class AnthropicClient:
         self.api_key = api_key
         self.base_url = (cfg["base_url"] or DEFAULT_BASE_URL).rstrip("/")
 
-    def complete(self, system: str, messages: list, tools: list, on_text=None) -> dict:
+    def complete(self, system: str, messages: list, tools: list,
+                 on_text=None, on_usage=None) -> dict:
         payload = {
             "model": self.cfg["model"],
             "max_tokens": self.cfg["max_tokens"],
@@ -60,12 +61,15 @@ class AnthropicClient:
 
         blocks: list[dict] = []
         json_buffers: dict[int, list[str]] = {}  # block index -> tool input parts
+        usage: dict = {}  # message_start usage, finalized by message_delta
         for event in post_sse(
             f"{self.base_url}/v1/messages", headers, payload, self.cfg["timeout"],
             retries=self.cfg.get("retries", 2),
         ):
             etype = event.get("type")
-            if etype == "content_block_start":
+            if etype == "message_start":
+                usage.update(event.get("message", {}).get("usage", {}))
+            elif etype == "content_block_start":
                 block = event["content_block"]
                 if block["type"] == "tool_use":
                     blocks.append(
@@ -88,8 +92,18 @@ class AnthropicClient:
                 if index in json_buffers:
                     raw = "".join(json_buffers.pop(index))
                     blocks[index]["input"] = json.loads(raw) if raw else {}
+            elif etype == "message_delta":
+                usage.update(event.get("usage", {}))
             elif etype == "error":
                 raise ScoutError(f"anthropic stream error: {event.get('error')}")
+
+        if on_usage:
+            on_usage({
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+                "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            })
 
         # empty text blocks are rejected by the API on the next turn
         blocks = [b for b in blocks if b["type"] != "text" or b["text"]]
