@@ -3,4 +3,4 @@
 Small enough to read end-to-end. Start in bus.py.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
