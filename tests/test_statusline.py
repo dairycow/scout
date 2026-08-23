@@ -92,3 +92,32 @@ def test_stderr_flip_keeps_stdout_clean(capsys, rt):
     out, err = capsys.readouterr()
     assert out == ""
     assert any("model=fake-1" in l and "turns=1" in l for l in err.splitlines())
+
+
+def test_streamed_answer_gets_leading_newline(capsys, rt):
+    streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}
+
+    def complete(system, messages, tools, on_text=None):
+        if on_text:
+            on_text("hi")  # streamed; cursor left mid-line
+        return streamed
+
+    rt.agent.client.complete = complete
+    rt.agent.run("hi", on_text=lambda d: print(d, end=""))
+    out, _ = capsys.readouterr()
+    assert "hi\nmodel=" in out  # newline inserted before the status line
+
+
+def test_newline_omitted_after_trailing_newline(capsys, rt):
+    streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi\n"}]}
+
+    def complete(system, messages, tools, on_text=None):
+        if on_text:
+            on_text("hi\n")  # answer already ended the line
+        return streamed
+
+    rt.agent.client.complete = complete
+    rt.agent.run("hi", on_text=lambda d: print(d, end=""))
+    out, _ = capsys.readouterr()
+    assert "hi\nmodel=" in out
+    assert "hi\n\nmodel=" not in out  # no doubled blank line

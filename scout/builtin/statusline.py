@@ -46,7 +46,13 @@ def scout(api) -> None:
         _slots["msg"] = str(len(message.get("content", [])))
         if any(b.get("type") == "tool_use" for b in message.get("content", [])):
             return  # mid-loop; print on the final (no-tool) message
-        print(_paint(_render()), file=_stream())
+        text = "".join(
+            b.get("text", "") for b in message.get("content", [])
+            if b.get("type") == "text"
+        )
+        # streamed answers leave the cursor mid-line; start our own line
+        lead = "" if not text or text.endswith("\n") else "\n"
+        print(lead + _paint(_render()), file=_stream())
 
     def to_stderr(**_):
         _set_stderr(True)
