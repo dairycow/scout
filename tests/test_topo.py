@@ -30,11 +30,13 @@ def scout(api):
 class FakeApi:
     def __init__(self):
         self.tools, self.commands, self.prompts = {}, {}, []
+        self.events, self.handlers = [], {}
 
     def tool(self, tool): self.tools[tool.name] = tool
-    def on(self, event, fn): pass
+    def on(self, event, fn): self.handlers.setdefault(event, []).append(fn)
     def prompt(self, text): self.prompts.append(text)
     def command(self, name, fn): self.commands[name] = fn
+    def emit(self, type, **data): self.events.append((type, data))
 
 
 def load_topo():
@@ -75,6 +77,7 @@ def test_registers_tools_command_no_prompt(topo):
     assert "/topo" in api.commands
     assert api.prompts == []  # guidance lives in the 'topo' skill, not the prompt
     assert "topo' skill" in api.tools["topo_write"].description
+    assert "topo.feedback" in api.handlers
 
 
 def test_write_resolves_and_confines(topo, ctx, tmp_path):
@@ -143,6 +146,54 @@ def test_server_guards(topo, ctx, tmp_path):
     bad = json.dumps({"path": "../../x", "items": [{"text": "a"}]}).encode()
     assert http("POST", f"{base}/__feedback", bad,
                 {"Content-Type": "application/json"})[0] == 400
+
+
+def test_post_emits_feedback_event_and_nudge_prints(topo, ctx, tmp_path, capsys):
+    module, _ = topo
+    api = FakeApi()
+    module.scout(api)
+    module._write_tool({"path": "feat", "html": "<html><body><h1 id=t>T</h1></body></html>"}, ctx)
+    module._open_tool({"path": "feat"}, ctx)
+    base = f"http://127.0.0.1:{module.ensure_server(tmp_path)['port']}"
+
+    payload = json.dumps({"path": "feat.html", "items": [
+        {"target": {"tag": "p"}, "text": "x"}]}).encode()
+    status, _ = http("POST", f"{base}/__feedback", payload,
+                     {"Content-Type": "application/json"})
+    assert status == 200
+    assert api.events == [("topo.feedback", {"path": "feat.html", "count": 1})]
+
+    api.handlers["topo.feedback"][0](path="feat.html", count=1)
+    out = capsys.readouterr().out
+    assert "1 comment ready on feat.html" in out and "topo_feedback" in out
+    api.handlers["topo.feedback"][0](path="feat.html", count=2)
+    assert "2 comments ready" in capsys.readouterr().out
+
+
+def test_fixed_port_with_fallback(tmp_path):
+    import socket
+
+    module = load_topo()
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # ignore TIME_WAIT, like the server
+    try:
+        sock.bind(("127.0.0.1", module.DEFAULT_PORT))
+    except OSError:
+        pytest.skip(f"port {module.DEFAULT_PORT} not free on this host")
+    try:
+        sock.listen(1)
+        a = tmp_path / "a"
+        a.mkdir()
+        assert module.ensure_server(a)["port"] != module.DEFAULT_PORT
+    finally:
+        sock.close()
+    module.stop_servers()
+    b = tmp_path / "b"
+    b.mkdir()
+    try:
+        assert module.ensure_server(b)["port"] == module.DEFAULT_PORT
+    finally:
+        module.stop_servers()
 
 
 def test_topo_command(topo, ctx, tmp_path, capsys):

@@ -53,9 +53,10 @@ mermaid source in the file is authoritative, not a rendered image.
 1. `topo_write` the artifact (path under docs/plans/, e.g. "auth-rollout";
    .html optional).
 2. `topo_open` it, then tell the user it is open in their browser.
-3. `topo_feedback` to collect their comments — empty until they send from
-   the browser panel; do not poll in a tight loop. One call after they say
-   they have sent, or once per turn when they ask for changes.
+3. The user comments in the browser; when they hit send, their terminal
+   prints a topo nudge line and they will tell you to collect. Call
+   `topo_feedback` then — it drains the queue. Never poll in a tight loop;
+   once per ask, or once when the user says they have sent.
 4. Revise with `topo_write` — their tab live-reloads — and repeat until
    they approve.
 

@@ -94,6 +94,8 @@ CHROME_JS = r"""(function () {
     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#1f2937;",
     "border:1px solid #374151;border-radius:9px;cursor:pointer}",
     "#__topo .status{color:#9ca3af;min-height:14px}",
+    "#__topo_dead{display:none;margin-top:6px;padding:4px 6px;background:#7f1d1d;",
+    "border:1px solid #ef4444;border-radius:5px;color:#fecaca}",
     "#__topo .on{background:#065f46;border-color:#059669}",
     ".__topo_hover{outline:2px solid #22d3ee !important;outline-offset:2px;cursor:crosshair}"
   ].join("");
@@ -105,8 +107,9 @@ CHROME_JS = r"""(function () {
     "<span><button id=__topo_mode>annotate: off</button> ",
     "<button id=__topo_send>send (0)</button></span></header>",
     "<div id=__topo_chips></div>",
-    "<textarea id=__topo_ta rows=2 placeholder='comment on selection…'></textarea>",
-    "<div class=status id=__topo_status></div>"
+    "<textarea id=__topo_ta rows=2 placeholder='type a comment… (Enter queues, send delivers)'></textarea>",
+    "<div class=status id=__topo_status></div>",
+    "<div id=__topo_dead>server unreachable — tab is stale; ask scout to topo_open again</div>"
   ].join("");
   document.body.appendChild(panel);
   var ta = document.getElementById("__topo_ta");
@@ -114,6 +117,9 @@ CHROME_JS = r"""(function () {
   var send = document.getElementById("__topo_send");
   var status = document.getElementById("__topo_status");
   var mode = document.getElementById("__topo_mode");
+  var deadEl = document.getElementById("__topo_dead");
+
+  function markDead(on) { deadEl.style.display = on ? "block" : "none"; }
 
   function describe(el) {
     var t = el.closest('[id],h1,h2,h3,h4,h5,li,p,section,article,table,tr,td,th,pre,blockquote,dt,dd,img,figure');
@@ -135,7 +141,7 @@ CHROME_JS = r"""(function () {
       chips.appendChild(c);
     });
     send.textContent = "send (" + queue.length + ")";
-    send.disabled = queue.length === 0;
+    send.disabled = queue.length === 0 && !ta.value.trim();
   }
   function say(msg) { status.textContent = msg; }
 
@@ -147,22 +153,23 @@ CHROME_JS = r"""(function () {
   ta.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); queueComment(); }
   });
+  ta.addEventListener("input", render);
   function queueComment() {
     var text = ta.value.trim();
     if (!text) return;
     queue.push({target: pendingTarget || {tag: "page"}, text: text});
     ta.value = ""; pendingTarget = null; render(); say("queued");
   }
-  ta.addEventListener("dblclick", queueComment);
   send.onclick = function () {
+    queueComment();  // flush any unqueued draft so a plain click on send works
     if (!queue.length) return;
     say("sending…");
     fetch("/__feedback", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({path: rel, items: queue})}
     ).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
-      queue = []; pendingTarget = null; render(); say("sent to agent ✓");
-    }).catch(function (e) { say("send failed: " + e.message); });
+      queue = []; pendingTarget = null; render(); markDead(false); say("sent to agent ✓");
+    }).catch(function (e) { markDead(true); say("send failed: " + e.message); });
   };
 
   document.addEventListener("click", function (e) {
@@ -182,7 +189,7 @@ CHROME_JS = r"""(function () {
     if (e.target.classList) e.target.classList.remove("__topo_hover");
   });
 
-  var mtime0 = null;
+  var mtime0 = null, fails = 0;
   function stash() {
     try {
       sessionStorage.setItem("__topo_" + rel, JSON.stringify({queue: queue, draft: ta.value}));
@@ -196,16 +203,24 @@ CHROME_JS = r"""(function () {
   render();
   setInterval(function () {
     fetch("/__poll?path=" + encodeURIComponent(rel))
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
       .then(function (d) {
+        fails = 0; markDead(false);
         if (mtime0 === null) { mtime0 = d.mtime; return; }
         if (d.mtime > mtime0) { stash(); location.reload(); }
-      }).catch(function () {});
+      }).catch(function () { if (++fails >= 3) markDead(true); });
   }, 1500);
 })();
 """
 
+DEFAULT_PORT = 4747  # stable across REPL restarts so open tabs revive
+
 _servers: dict[str, dict] = {}
+
+_EMIT = None  # set by scout(api); the POST handler nudges the bus through it
 
 
 def _open_browser(url: str) -> bool:
@@ -300,7 +315,14 @@ def _make_handler(cwd: Path):
                 items = body.get("items")
                 if artifact is None or not isinstance(items, list) or not items:
                     return self._json(400, {"error": "bad request"})
-                _append_feedback(cwd, artifact, items[:100])
+                appended = items[:100]
+                _append_feedback(cwd, artifact, appended)
+                if _EMIT is not None:
+                    try:  # a broken subscriber must never fail the POST
+                        _EMIT("topo.feedback", path=_rel_under(plans, artifact),
+                              count=len(appended))
+                    except Exception:  # noqa: BLE001
+                        pass
                 return self._json(200, {"ok": True})
             except (ValueError, OSError):
                 return self._json(400, {"error": "bad request"})
@@ -308,10 +330,17 @@ def _make_handler(cwd: Path):
     return Handler
 
 
+def _bind_server(cwd: Path) -> ThreadingHTTPServer:
+    try:
+        return ThreadingHTTPServer(("127.0.0.1", DEFAULT_PORT), _make_handler(cwd))
+    except OSError:  # 4747 taken (another topo, another cwd) — ephemeral is fine
+        return ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(cwd))
+
+
 def ensure_server(cwd: Path) -> dict:
     key = str(cwd)
     if key not in _servers:
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(cwd))
+        httpd = _bind_server(cwd)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True,
                                   name=f"topo-{httpd.server_port}")
         thread.start()
@@ -322,6 +351,7 @@ def ensure_server(cwd: Path) -> dict:
 def stop_servers() -> None:
     for s in _servers.values():
         s["httpd"].shutdown()
+        s["httpd"].server_close()
     _servers.clear()
 
 
@@ -407,6 +437,16 @@ def topo_cmd(agent, rest: str) -> None:
 
 
 def scout(api) -> None:
+    global _EMIT
+    _EMIT = api.emit
+
+    def on_feedback(path="", count=0, **_):
+        plural = "" if count == 1 else "s"
+        print(f"\n(topo: {count} comment{plural} ready on {path} — "
+              "collect with topo_feedback)")
+
+    api.on("topo.feedback", on_feedback)
+
     api.tool(Tool(
         name="topo_write",
         description="Write an HTML planning artifact under docs/plans/ (path may omit .html). "
