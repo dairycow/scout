@@ -1,4 +1,4 @@
-"""Usage meter plugin: per-turn lines, session totals, /usage, stream flip."""
+"""Usage meter plugin: per-turn lines, session totals, stream flip."""
 
 import os
 
@@ -56,19 +56,15 @@ def test_usage_line_flips_to_stderr_with_display(rt, capsys):
     assert any(ln.startswith("tok in=10") for ln in err.splitlines())
 
 
-def test_usage_command_prints_totals(rt, capsys):
-    rt.agent.run("one")
-    rt.agent.run("two")
-    capsys.readouterr()
-    rt.commands["/usage"](rt.agent, "")
-    captured = capsys.readouterr().out
-    assert "in=20 out=8" in captured
-    assert "cache read=200 cache write=10" in captured
+def test_no_usage_command_registered(rt):
+    assert "/usage" not in rt.commands
 
 
 def test_totals_reset_on_session_start(rt, capsys):
     rt.agent.run("one")
     capsys.readouterr()
     rt.bus.emit("session.start")
-    rt.commands["/usage"](rt.agent, "")
-    assert "in=0" in capsys.readouterr().out
+    rt.agent.run("two")
+    lines = [ln for ln in capsys.readouterr().out.splitlines()
+             if ln.startswith("tok ")]
+    assert lines[0].endswith("session in=10 out=4")

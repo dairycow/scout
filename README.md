@@ -86,7 +86,7 @@ default on; `--no-parallel-tools` to disable) — the API still sees
 results in the order it issued the calls. Right after every
 `message.assistant` the agent emits `usage` with that turn's token
 counts (including Anthropic cache hit/creation); `builtin/usage.py`
-prints the `tok=` line and backs `/usage`. Transient HTTP failures
+prints the `tok=` line per turn. Transient HTTP failures
 (429/5xx) are retried with backoff before the stream starts —
 `retries` (default 2), `Retry-After` honored.
 

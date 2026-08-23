@@ -8,7 +8,6 @@ HELP = """\
 /clear    start a fresh session
 /fork [n] fork this session at message n (default: all)
 /skills   list installed skills
-/usage    token totals for this session
 /plugins  list loaded plugins"""
 
 
