@@ -101,8 +101,7 @@ def test_env_override_int_coercion(isolated, monkeypatch):
 
 def test_plugin_loaded_events_fired(isolated):
     rt = boot(isolated, {})
-    for name in ("config", "session", "providers", "tools",
-                 "skills", "prompt", "display", "commands"):
+    for name in MANIFEST:
         assert name in rt.plugins
     assert "fake" in rt.plugins
 
@@ -125,7 +124,7 @@ def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
     assert MANIFEST.index("session") < MANIFEST.index("display")
     assert MANIFEST == [
         "config", "session", "providers", "tools",
-        "skills", "prompt", "display", "commands",
+        "skills", "prompt", "display", "commands", "readline",
     ]
 
     events = []

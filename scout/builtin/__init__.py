@@ -6,5 +6,5 @@ before display so projections are current for later subscribers.
 
 MANIFEST = [
     "config", "session", "providers", "tools",
-    "skills", "prompt", "display", "commands",
+    "skills", "prompt", "display", "commands", "readline",
 ]
