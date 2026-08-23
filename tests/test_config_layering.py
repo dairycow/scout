@@ -11,7 +11,7 @@ FAKE = '''
 class FakeClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):
@@ -53,6 +53,8 @@ def test_defaults(env):
     assert rt.config["max_tokens"] == 16384
     assert rt.config["max_turns"] == 40
     assert rt.config["timeout"] == 300
+    assert rt.config["retries"] == 2
+    assert rt.config["parallel_tools"] is True
     assert rt.config["flavor"] == "from-plugin"
     assert rt.config["api_key"] == ""
     assert rt.config["base_url"] == ""

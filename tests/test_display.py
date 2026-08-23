@@ -10,7 +10,7 @@ FAKE = '''
 class FakeClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):

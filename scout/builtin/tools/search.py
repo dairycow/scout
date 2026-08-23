@@ -5,9 +5,10 @@ import os
 import re
 from pathlib import Path
 
-from scout.tools import Tool
+from scout.tools import Tool, clip_line
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".scout"}
+MATCH_LINE = 500  # grep hits carry context; cap them harder than read lines
 
 
 def _walk(root: Path):
@@ -33,7 +34,7 @@ def _grep(args: dict, ctx) -> str:
             for number, line in enumerate(lines, start=1):
                 if pattern.search(line):
                     rel = file.relative_to(ctx.cwd)
-                    hits.append(f"{rel}:{number}: {line.strip()}")
+                    hits.append(f"{rel}:{number}: {clip_line(line.strip(), MATCH_LINE)}")
                 if len(hits) >= 200:
                     hits.append("... [stopped at 200 matches]")
                     return "\n".join(hits)

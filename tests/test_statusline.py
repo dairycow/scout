@@ -12,7 +12,7 @@ class FakeClient:
         self.cfg = cfg
         self.replies = []
         self.i = 0
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         if not self.replies:
             return {"role": "assistant",
                     "content": [{"type": "text", "text": "ok"}]}
@@ -53,7 +53,7 @@ def test_one_status_line_per_completed_turn(capsys, rt):
     ]
     rt.agent.run("hello")
     out, err = capsys.readouterr()
-    lines = [l for l in out.splitlines() if l.startswith("model=")]
+    lines = [ln for ln in out.splitlines() if ln.startswith("model=")]
     assert len(lines) == 1
     assert lines[0].startswith("model=fake-1 turns=2 msg=1")
     assert err == ""
@@ -65,7 +65,7 @@ def test_segments_from_session_start(capsys, rt):
     ]
     rt.agent.run("hi")
     out, _ = capsys.readouterr()
-    line = [l for l in out.splitlines() if "turns=" in l][0]
+    line = [ln for ln in out.splitlines() if "turns=" in ln][0]
     assert line.startswith("model=")
     assert "turns=1 msg=1" in line
     assert "\x1b[" not in line  # not a tty -> no ANSI
@@ -80,7 +80,7 @@ def test_clear_reseeds_slots(capsys, rt):
     rt.agent.client.replies = [_assistant([{"type": "text", "text": "hi"}])]
     rt.agent.run("again")
     out, _ = capsys.readouterr()
-    line = [l for l in out.splitlines() if "turns=" in l][0]
+    line = [ln for ln in out.splitlines() if "turns=" in ln][0]
     assert line.startswith("model=m2")
     assert "turns=1 msg=1" in line
 
@@ -91,13 +91,13 @@ def test_stderr_flip_keeps_stdout_clean(capsys, rt):
     rt.agent.run("hi")
     out, err = capsys.readouterr()
     assert out == ""
-    assert any("model=fake-1" in l and "turns=1" in l for l in err.splitlines())
+    assert any("model=fake-1" in ln and "turns=1" in ln for ln in err.splitlines())
 
 
 def test_streamed_answer_gets_leading_newline(capsys, rt):
     streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}
 
-    def complete(system, messages, tools, on_text=None):
+    def complete(system, messages, tools, on_text=None, on_usage=None):
         if on_text:
             on_text("hi")  # streamed; cursor left mid-line
         return streamed
@@ -111,7 +111,7 @@ def test_streamed_answer_gets_leading_newline(capsys, rt):
 def test_newline_omitted_after_trailing_newline(capsys, rt):
     streamed = {"role": "assistant", "content": [{"type": "text", "text": "hi\n"}]}
 
-    def complete(system, messages, tools, on_text=None):
+    def complete(system, messages, tools, on_text=None, on_usage=None):
         if on_text:
             on_text("hi\n")  # answer already ended the line
         return streamed

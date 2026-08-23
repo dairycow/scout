@@ -4,7 +4,7 @@ import pytest
 
 from scout.builtin.skills import Skill
 from scout.builtin.tools import bash, edit, read, search, skill, write
-from scout.tools import Ctx, Registry, Tool, truncate
+from scout.tools import Ctx, Registry, Tool, clip_line, truncate
 
 
 def builtins():
@@ -147,3 +147,25 @@ def test_truncate():
     out = truncate(long, limit=10)
     assert len(out) < 100 and "characters truncated" in out
     assert out.startswith("xxxxx") and out.endswith("xxxxx")
+
+
+def test_clip_line():
+    assert clip_line("short") == "short"
+    out = clip_line("x" * 3000)
+    assert out.startswith("xxxxx") and "+1000 chars" in out
+
+
+def test_read_clips_huge_lines(reg, ctx, tmp_path):
+    (tmp_path / "min.txt").write_text("ok\n" + "y" * 10_000 + "\n")
+    output, _ = run(reg, ctx, "read", {"path": "min.txt"})
+    lines = output.splitlines()
+    assert lines[0] == "1: ok"
+    assert lines[1].startswith("2: yyyy") and "+8000 chars" in lines[1]
+    assert len(lines[1]) < 2_100
+
+
+def test_grep_clips_huge_lines(reg, ctx, tmp_path):
+    (tmp_path / "min.log").write_text("z" * 5_000 + "\n")
+    output, _ = run(reg, ctx, "grep", {"pattern": "z+"})
+    assert output.startswith("min.log:1: zzz") and "+4500 chars" in output
+    assert len(output) < 600

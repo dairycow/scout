@@ -1,6 +1,6 @@
 """read: read a text file with line numbers, like an error message refers to."""
 
-from scout.tools import Tool
+from scout.tools import Tool, clip_line
 
 DEFAULT_LIMIT = 2000
 
@@ -16,7 +16,9 @@ def _run(args: dict, ctx) -> str:
     limit = args.get("limit", DEFAULT_LIMIT)
     end = offset - 1 + limit
     chunk = lines[offset - 1:end]
-    numbered = "\n".join(f"{offset + i}: {line}" for i, line in enumerate(chunk))
+    numbered = "\n".join(
+        f"{offset + i}: {clip_line(line)}" for i, line in enumerate(chunk)
+    )
     if len(lines) > end:
         numbered += f"\n... [{len(lines) - end} more lines; use offset={end + 1}] ..."
     return numbered or "(empty file)"

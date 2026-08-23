@@ -59,12 +59,14 @@ class OpenAIClient:
         self.api_key = api_key
         self.base_url = (cfg["base_url"] or DEFAULT_BASE_URL).rstrip("/")
 
-    def complete(self, system: str, messages: list, tools: list, on_text=None) -> dict:
+    def complete(self, system: str, messages: list, tools: list,
+                 on_text=None, on_usage=None) -> dict:
         payload = {
             "model": self.cfg["model"],
             "max_tokens": self.cfg["max_tokens"],
             "messages": to_openai(system, messages),
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = [
@@ -82,11 +84,15 @@ class OpenAIClient:
 
         text_parts: list[str] = []
         calls: dict[int, dict] = {}  # tool_call index -> {"id", "name", "args": [parts]}
+        usage: dict = {}  # final chunk's usage, when stream_options is honored
         for chunk in post_sse(
-            f"{self.base_url}/chat/completions", headers, payload, self.cfg["timeout"]
+            f"{self.base_url}/chat/completions", headers, payload, self.cfg["timeout"],
+            retries=self.cfg.get("retries", 2),
         ):
             if chunk.get("error"):
                 raise ScoutError(f"openai stream error: {chunk['error']}")
+            if chunk.get("usage"):
+                usage = chunk["usage"]
             choice = (chunk.get("choices") or [{}])[0]
             delta = choice.get("delta") or {}
             if delta.get("content"):
@@ -120,4 +126,12 @@ class OpenAIClient:
                     "input": args,
                 }
             )
+        if on_usage:
+            details = usage.get("prompt_tokens_details") or {}
+            on_usage({
+                "input_tokens": usage.get("prompt_tokens", 0),
+                "output_tokens": usage.get("completion_tokens", 0),
+                "cache_read_input_tokens": details.get("cached_tokens", 0),
+                "cache_creation_input_tokens": 0,
+            })
         return {"role": "assistant", "content": blocks}

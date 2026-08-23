@@ -18,7 +18,7 @@ CFG = {"model": "claude-sonnet-4-5", "max_tokens": 64, "base_url": "", "timeout"
 
 @pytest.fixture
 def client(monkeypatch):
-    def fake_post_sse(url, headers, payload, timeout):
+    def fake_post_sse(url, headers, payload, timeout, retries=2):
         assert url == "https://api.anthropic.com/v1/messages"
         assert headers["x-api-key"] == "k"
         assert payload["system"][0]["text"] == "sys"
@@ -93,6 +93,38 @@ HISTORY = [
 ]
 
 
+def test_usage_normalized_with_cache_fields(client):
+    client.events = [
+        {"type": "message_start", "message": {"usage": {
+            "input_tokens": 100, "cache_read_input_tokens": 500,
+            "cache_creation_input_tokens": 50, "output_tokens": 1,
+        }}},
+        START_TEXT,
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "text_delta", "text": "Hi"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+         "usage": {"output_tokens": 34}},
+        {"type": "message_stop"},
+    ]
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert got == [{
+        "input_tokens": 100, "output_tokens": 34,
+        "cache_read_input_tokens": 500, "cache_creation_input_tokens": 50,
+    }]
+
+
+def test_usage_zeroed_when_stream_carries_none(client):
+    client.events = [{"type": "message_stop"}]
+    got = []
+    client.complete("sys", [], [], on_usage=got.append)
+    assert got == [{
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }]
+
+
 def test_cache_control_on_system_and_last_block(client):
     messages = copy.deepcopy(HISTORY)
     client.events = [{"type": "message_stop"}]
@@ -128,3 +160,18 @@ def test_cache_control_does_not_mutate_caller_or_return(client):
     assert messages == snapshot
     assert "cache_control" not in json.dumps(message)
     assert "cache_control" not in json.dumps(messages)
+
+
+def test_cache_control_is_o1_earlier_messages_shared(client):
+    """The tail copy must not clone the rest of the history — pins the
+    O(1) request build against regression to a full deepcopy."""
+    messages = copy.deepcopy(HISTORY)
+    client.events = [{"type": "message_stop"}]
+    client.complete("sys", messages, [])
+
+    sent = client.payload["messages"]
+    assert len(sent) == len(messages)
+    for earlier, mine in zip(sent[:-1], messages[:-1]):
+        assert earlier is mine
+    assert sent[-1] is not messages[-1]  # only the tail is fresh
+    assert sent[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}

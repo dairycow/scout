@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Scout perf plan — retries, usage metering, parallel tools</title>
+<style>
+:root{--ink:#1c2333;--mut:#5b6474;--line:#e3e7ef;--bg:#fafbfd;--acc:#0b62d6;--ok:#0a7d3f;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+main{max-width:960px;margin:0 auto;padding:28px 24px 80px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+h3{font-size:15px;margin:18px 0 6px}
+p{margin:8px 0}.sub{color:var(--mut);margin:0 0 2px}
+.status{display:flex;gap:10px;align-items:center;background:#eef4fd;border:1px solid #cfe0f8;border-radius:8px;padding:10px 14px;margin:14px 0 0;font-weight:600}
+.status .dot{width:10px;height:10px;border-radius:50%;background:var(--warn)}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:#f0f3f9;font-weight:600}
+code,pre.mermaid{font:13px/1.5 ui-monospace,monospace}
+code{background:#eef1f6;border-radius:4px;padding:1px 5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:#fff}
+.card h3{margin:0 0 6px}
+.tag{display:inline-block;font-size:12px;font-weight:600;border-radius:99px;padding:1px 9px;margin-left:6px;vertical-align:2px}
+.t-dep{background:#fdeaea;color:#9c2020}.t-conf{background:#fdf3e3;color:var(--warn)}.t-out{background:#eee;color:#777}.t-new{background:#e8f6ee;color:var(--ok)}
+ul{margin:6px 0;padding-left:22px}
+.small{font-size:13px;color:var(--mut)}
+.gate{font-family:ui-monospace,monospace;font-size:12.5px;background:#f4f6fa;border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre;overflow-x:auto;margin:8px 0}
+.rev{border-left:3px solid var(--acc);background:#f5f9ff;padding:8px 12px;margin:10px 0;border-radius:0 6px 6px 0}
+.rev b{color:var(--acc)}
+</style></head><body><main>
+
+<h1 id="title">Scout perf plan</h1>
+<p class="sub" id="subtitle">Branch <code>perf</code> · one PR · retries, usage metering, parallel tools · 2026-08-23 · rev 2</p>
+<div class="status" id="status"><span class="dot"></span>REVISED — review comments addressed, awaiting re-review</div>
+
+<h2 id="goal">Goal</h2>
+<p id="goal-body">Cut the two real costs in scout's wall clock and add the observability to prove it:</p>
+<ol id="goal-list">
+<li><strong id="goal-retry">Retry with backoff</strong> — one transient 429/5xx no longer kills a run. <code>scout/http.py</code> currently has <em>zero</em> retry: any 429/500/529 becomes <code>ScoutError</code>, <code>cli.py</code> prints it, and the whole turn — prompt already paid for — is discarded. Survivable when you retype a prompt; fatal mid-run.</li>
+<li><strong id="goal-usage">Usage events + meter</strong> — per-turn token counts incl. Anthropic cache hit/creation; tokens only, no prices. Display surface: a statusline slot (sibling <code>statusline</code> branch) plus the <code>/usage</code> command — see <a href="#cross-branch">cross-branch</a>.</li>
+<li><strong id="goal-parallel">Parallel tool execution</strong> — multi-tool turns go from sum(durations) to max(durations).</li>
+</ol>
+
+<h2 id="non-goals">Non-goals</h2>
+<ul id="non-goals-list">
+<li id="ng-cost">Cost estimates / price tables — token counts only.</li>
+<li id="ng-partial">Partial or per-tool parallelism policy — all tools in parallel behind one kill-switch.</li>
+<li id="ng-statusline-ui">Building the statusline here — it already exists on the <code>statusline</code> branch (<code>d6ba8c6</code>); this PR only feeds it a <code>usage</code> event.</li>
+</ul>
+
+<h2 id="decisions">Locked decisions</h2>
+<table id="decisions-table">
+<tr><th>Question</th><th>Decision</th></tr>
+<tr id="dec-parallel"><td>Parallel tool policy</td><td>All tools in parallel; <code>parallel_tools</code> config kill-switch</td></tr>
+<tr id="dec-usage"><td>Usage display</td><td>Tokens only, no price tables</td></tr>
+<tr id="dec-usage-surface"><td>Usage display surface</td><td>statusline slot (via the <code>usage</code> event) + <code>/usage</code> command; nothing new in this PR's display code</td></tr>
+<tr id="dec-merge"><td>Merge order vs <code>statusline</code> branch</td><td><code>statusline</code> merges first; this PR rebases, C5 refreshes README</td></tr>
+</table>
+
+<h2 id="topology">Execution topology</h2>
+<p id="topo-intro">Nodes C2–C5 with read/write sets verified against the tree. The graph is a pure chain — sequential execution is forced, not merely chosen.</p>
+<pre class="mermaid" id="topo-diagram">
+flowchart LR
+  C1[C1 perf plan<br/>root · done] --> C2[C2 retry<br/>L1]
+  C2 --> C3[C3 usage+meter<br/>L2]
+  C3 --> C4[C4 parallel tools<br/>L3]
+  C2 -.conflict: config/cli.-> C4
+  C4 --> C5[C5 README<br/>L4]
+  classDef done fill:#e8f6ee,stroke:#0a7d3f
+  class C1 done
+</pre>
+<p class="small" id="critical-path">Critical path: C1 → C2 → C3 → C4 → C5 — depth 4, no slack; no parallelizable pair exists.</p>
+<p class="small" id="topo-causal">Causal note beyond the file seams: C2 is also a <em>prerequisite</em> for C4. Parallel tools re-enter the model with up to 8 tool results in a burst; without retry, one transient 429/529 in that burst kills the run. Retry is what makes parallel tools safe to ship, not a neighboring nicety.</p>
+
+<h2 id="commits">Commits</h2>
+<table id="commits-table">
+<tr><th>#</th><th>Deliverable</th><th>Key files</th><th>Gate</th></tr>
+<tr id="cm-1"><td>1</td><td>plan (done)</td><td><code>docs/plans/2026-08-23-perf.md</code></td><td>—</td></tr>
+<tr id="cm-2"><td>2</td><td>Retry with backoff <span class="tag t-dep">dep: none</span></td><td><code>scout/http.py</code>, providers, config, <code>cli.py</code>, <code>tests/test_http.py</code> (new)</td><td>new tests + suite green</td></tr>
+<tr id="cm-3"><td>3</td><td>Usage events + meter <span class="tag t-conf">conflict ← C2</span></td><td>providers, <code>scout/agent.py</code>, <code>builtin/usage.py</code> (new), MANIFEST, fakes</td><td>new tests + suite green</td></tr>
+<tr id="cm-4"><td>4</td><td>Parallel tools <span class="tag t-dep">dep: C3</span> <span class="tag t-conf">conflict ← C2</span></td><td><code>scout/agent.py</code>, <code>host.py</code> bool coercion, config, <code>cli.py</code></td><td>new tests + suite green</td></tr>
+<tr id="cm-5"><td>5</td><td>README refresh <span class="tag t-dep">dep: C2–C4</span> <span class="tag t-new">rebase after statusline merges</span></td><td><code>README.md</code></td><td>full suite green</td></tr>
+</table>
+
+<h2 id="design">Design notes per feature</h2>
+<div class="grid" id="design-grid">
+<div class="card" id="card-retry"><h3>Retry (C2)</h3><ul>
+<li><strong>Why it's an issue even if you haven't seen it.</strong> Today <code>http.py</code> maps every <code>HTTPError</code>/<code>URLError</code> straight to <code>ScoutError</code>, and <code>cli.py</code> prints-and-continues. In the REPL that just costs a retyped prompt. In a long tool loop it discards a turn whose full prompt (system + all history + tool results) was already paid for, and C4's burst of tool-result re-entries makes transient 429/529 <em>more</em> likely, not less. Anthropic returns 529 (overloaded) routinely at peak; one 30s backoff turns a dead run into a pause.</li>
+<li>Retry only <em>pre-stream</em> failures; once the first SSE event yields, a later failure raises (no duplicated text).</li>
+<li>Retryable: 429/500/502/503/504/529 + <code>URLError</code>; everything else raises on attempt 1.</li>
+<li>Backoff <code>0.5·2ⁿ + jitter</code>, cap 8s; <code>Retry-After</code> honored, cap 30s. <code>retries=2</code> default + CLI/env.</li>
+</ul></div>
+<div class="card" id="card-usage"><h3>Usage (C3)</h3><ul>
+<li>Client protocol: <code>complete(..., on_usage=None)</code>; providers call <code>on_usage(dict)</code> once at stream end.</li>
+<li>Normalized fields: <code>input_tokens</code>, <code>output_tokens</code>, <code>cache_read_input_tokens</code>, <code>cache_creation_input_tokens</code>.</li>
+<li>Agent buffers the callback; <code>bus.emit("usage", ...)</code> right after <code>message.assistant</code>.</li>
+<li><strong>Display: the statusline slot</strong> — <code>statusline.py</code> (sibling branch, <code>d6ba8c6</code>) already renders a dim <code>key=value</code> line per user turn and subscribes near <code>message.assistant</code>; since <code>usage</code> is emitted immediately after it, the slot store picks up a <code>tok=…</code> segment with no new seams. Until that branch merges, <code>/usage</code> prints session totals on its own.</li>
+<li><code>/usage</code> command prints session totals.</li>
+</ul></div>
+<div class="card" id="card-parallel"><h3>Parallel tools (C4)</h3><ul>
+<li>When <code>len(calls)&gt;1</code> and <code>parallel_tools</code>: emit all <code>tool.start</code>, dispatch on <code>ThreadPoolExecutor(min(n,8))</code>, emit <code>tool.end</code> as futures complete, reassemble by index.</li>
+<li><strong>All bus emits on the main thread</strong> — sqlite is <code>check_same_thread=True</code>.</li>
+<li>Kill-switch <code>parallel_tools=true</code> + <code>--no-parallel-tools</code> + <code>SCOUT_PARALLEL_TOOLS</code> (new bool coercion in <code>host.py</code>).</li>
+<li>Single-call and kill-switch paths keep the exact serial event sequence (pinned by <code>test_loop_events</code>).</li>
+<li>Depends on C2 landing first: the burst of parallel re-entries raises transient-429 odds, and without retry that kills the run (see topology note).</li>
+</ul></div>
+</div>
+
+<h2 id="cross-branch">Cross-branch: usage × statusline</h2>
+<div class="rev" id="cross-branch-body">
+<p><b>Where usage displays.</b> Not in this PR's display code. The sibling <code>statusline</code> worktree (branch <code>statusline</code>, commit <code>d6ba8c6</code>) ships <code>scout/builtin/statusline.py</code>: a named-slot store rendered as one dim line per completed user turn, subscribing to <code>session.start</code> / <code>message.assistant</code> / <code>display.stderr</code>. This PR's contract with it is one event: <code>usage</code>, emitted right after <code>message.assistant</code> — statusline (or a thin follow-up there) adds a <code>tok=…</code> slot. No kernel seams, no config, nothing else.</p>
+<p><b>Overlap to manage.</b> Both branches edit <code>builtin/__init__.py</code> (MANIFEST row) and <code>README.md</code> (plugin table/counts). Merge <code>statusline</code> first; this PR rebases (one MANIFEST line, one README row), and C5 refreshes the README against the post-merge tree. This PR does not touch <code>statusline.py</code>.</p>
+</div>
+
+<h2 id="gates">Gates (every commit)</h2>
+<div class="gate" id="gates-block">uv run pytest -q        # suite green, never a weakened test
+uv run ruff check       # lint green
+tests/test_kernel_purity.py   # kernel→builtin imports unchanged
+tests/test_session_store.py   # untouched this PR, must stay green</div>
+
+<h2 id="risks">Risks &amp; accepted trade-offs</h2>
+<table id="risks-table">
+<tr><th>Risk</th><th>Handling</th></tr>
+<tr id="risk-protocol"><td>Client protocol change breaks third-party provider plugins</td><td>Accepted; flagged in PR description and README. Version bump at release is the maintainer's call.</td></tr>
+<tr id="risk-streamopts"><td>Exotic OpenAI-compat server rejects <code>stream_options</code></td><td>Accepted; revisit if reported.</td></tr>
+<tr id="risk-write"><td>Concurrent write/edit on the same file</td><td>Accepted as a model error (matches Claude Code semantics).</td></tr>
+<tr id="risk-ctrlc"><td>Ctrl-C during parallel dispatch</td><td><code>shutdown(wait=False, cancel_futures=True)</code>; an in-flight bash process may run to its timeout (known limitation).</td></tr>
+<tr id="risk-statusline"><td>Statusline branch drifts before merge (slot/event shape changes)</td><td>Contract is one payload dict; if <code>statusline</code> merges a different shape, C3's emit is a one-line fix at rebase. Tracked in <a href="#open-questions">open questions</a>.</td></tr>
+</table>
+
+<h2 id="budget">Budget</h2>
+<p id="budget-body">LOC ceiling ~1,770 (±20% of ~1,470); planned total ~1,620 — the statusline is ~70 LOC on the other branch and is not counted here. Kernel <code>agent.py</code> ~60 → ~90. Mermaid source in this file is authoritative.</p>
+
+<h2 id="open-questions">Open questions</h2>
+<ul id="open-questions-list">
+<li id="oq-version">Release versioning for the <code>on_usage</code> protocol bump (0.3.x → 0.4.0?) — maintainer decides at release.</li>
+<li id="oq-serial"><code>Retry-After</code> header parse edge cases (HTTP-date form) — int seconds only for now.</li>
+<li id="oq-slot">Exact statusline segment for usage (<code>tok=1.2k/34k</code>? cache-hit shown?) — decide when rebasing onto <code>statusline</code>.</li>
+</ul>
+
+<p class="small" id="footer">Source plans: <code>docs/plans/2026-08-23-perf.md</code> (contract) · <code>docs/plans/2026-08-23-perf-topo.md</code> (topology). This artifact is the visual review copy. Rev 2: usage display surface pinned to statusline; retry rationale added.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true});</script>
+</body></html>

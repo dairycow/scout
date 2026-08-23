@@ -3,7 +3,7 @@
 A minimal terminal coding agent, small enough to read end-to-end.
 
 scout exists to be understood. If you want to build your own agents, the
-whole thing is ~1,400 lines of dependency-free Python — no SDKs, no
+whole thing is ~1,800 lines of dependency-free Python — no SDKs, no
 frameworks, no personality. Read every file in an afternoon, then hack on it.
 
     pip install scout-harness            # or: pip install git+https://github.com/dairycow/scout
@@ -29,10 +29,10 @@ Kernel first, then builtins, then the store. The afternoon ends at
 | Order | File | ~LOC | What you'll learn |
 |---|---|---|---|
 | 1 | `scout/bus.py` | 30 | event bus — `emit` / `on`, open vocabulary |
-| 2 | `scout/host.py` | 140 | boot, PluginApi, registries, three seams |
-| 3 | `scout/agent.py` | 60 | the loop as a pure emitter |
-| 4 | `scout/cli.py` | 110 | args, REPL shell, `-p` / `-c` |
-| 5 | `scout/builtin/` | ~1,100 | 10 internal plugins, one file each, deletable |
+| 2 | `scout/host.py` | 150 | boot, PluginApi, registries, three seams |
+| 3 | `scout/agent.py` | 115 | the loop as a pure emitter; parallel tool dispatch |
+| 4 | `scout/cli.py` | 115 | args, REPL shell, `-p` / `-c` |
+| 5 | `scout/builtin/` | ~1,200 | 11 internal plugins, one file each, deletable |
 | 6 | `scout/builtin/session.py` | 210 | append-only events + projection; fork/resume as queries |
 
 The rest of the kernel is `tools.py` (Tool / Registry / Ctx), `http.py`
@@ -40,7 +40,7 @@ The rest of the kernel is `tools.py` (Tool / Registry / Ctx), `http.py`
 
 ## Architecture
 
-The kernel is ~440 lines and knows nothing: no sqlite, no toml, no
+The kernel is ~570 lines and knows nothing: no sqlite, no toml, no
 builtins except three one-line seams. Everything else is a plugin on one
 API — scout's own features use the same `PluginApi` user plugins do.
 
@@ -69,7 +69,7 @@ API — scout's own features use the same `PluginApi` user plugins do.
      ~/.scout/store.db
 ```
 
-The whole game is still `agent.py` (~60 lines):
+The whole game is still `agent.py` (~115 lines):
 
 ```
 user message → model → tool calls? → run tools → emit results → model → ...
@@ -81,6 +81,15 @@ subscription. Messages are normalized to Anthropic's format everywhere
 inside scout; `builtin/providers/openai.py` is the only place that
 translates to a different wire format.
 
+A turn with several tool calls runs them concurrently (`parallel_tools`,
+default on; `--no-parallel-tools` to disable) — the API still sees
+results in the order it issued the calls. Right after every
+`message.assistant` the agent emits `usage` with that turn's token
+counts (including Anthropic cache hit/creation); `builtin/usage.py`
+prints the `tok=` line per turn. Transient HTTP failures
+(429/5xx) are retried with backoff before the stream starts —
+`retries` (default 2), `Retry-After` honored.
+
 ### PluginApi
 
 | Method | What it does |
@@ -89,7 +98,7 @@ translates to a different wire format.
 | `on(event, fn)` | subscribe to any event (open vocabulary) |
 | `prompt(text)` | append a paragraph to the system prompt |
 | `command(name, fn)` | REPL command; `fn(agent, rest_of_line)` |
-| `provider(name, factory)` | `factory(config) → client`; selectable via config |
+| `provider(name, factory)` | `factory(config) → client`; selectable via config. Clients implement `complete(system, messages, tools, on_text=None, on_usage=None)` and call `on_usage(dict)` once at stream end |
 | `config(defaults)` | declare config keys + defaults |
 | `emit(type, **data)` | emit any event on the bus |
 
@@ -147,6 +156,8 @@ Precedence: plugin defaults `<` `~/.config/scout/scout.toml` `<` `./scout.toml`
 | `max_tokens` | `16384` | `--max-tokens` | per response |
 | `max_turns` | `40` | `--max-turns` | tool-loop guard per user message |
 | `timeout` | `300` | — | seconds per HTTP request |
+| `retries` | `2` | `--retries` / `SCOUT_RETRIES` | retry attempts for transient HTTP 429/5xx/URLError, pre-stream only; `Retry-After` honored |
+| `parallel_tools` | `true` | `--no-parallel-tools` / `SCOUT_PARALLEL_TOOLS` | run a turn's tool calls concurrently (bool envs: true/false/1/0) |
 
 Any OpenAI-compatible endpoint works by pointing `base_url` at it.
 Plugins declare extra keys with `api.config({...})`; those join the same
@@ -214,7 +225,7 @@ projection equals `rebuild()`, row for row) are release gates.
 
 ```
 scout/            the kernel (start in bus.py)
-scout/builtin/    10 internal plugins, same API as user plugins
+scout/builtin/    11 internal plugins, same API as user plugins
 tests/            offline test suite (fake clients, no network)
 examples/plugins/ hello tool, tool logger (Plugin API v2)
 examples/skills/  commit skill
@@ -222,7 +233,7 @@ examples/skills/  commit skill
 
 ## Not in v2 (on purpose)
 
-context compaction · MCP · permission prompts · TUI · token accounting ·
+context compaction · MCP · permission prompts · TUI ·
 pip entry-point plugins. Each is a plugin-sized change to one file —
 good first patches.
 

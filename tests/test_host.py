@@ -15,7 +15,7 @@ from scout.tools import Tool
 class FakeClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):
@@ -99,6 +99,20 @@ def test_env_override_int_coercion(isolated, monkeypatch):
         boot(isolated, {})
 
 
+def test_env_override_bool_coercion(isolated, monkeypatch):
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "false")
+    rt = boot(isolated, {})
+    assert rt.config["parallel_tools"] is False
+
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "TRUE")
+    rt = boot(isolated, {})
+    assert rt.config["parallel_tools"] is True
+
+    monkeypatch.setenv("SCOUT_PARALLEL_TOOLS", "banana")
+    with pytest.raises(ScoutError, match="true or false"):
+        boot(isolated, {})
+
+
 def test_plugin_loaded_events_fired(isolated):
     rt = boot(isolated, {})
     for name in MANIFEST:
@@ -124,7 +138,7 @@ def test_boot_emits_plugin_loaded_and_session_start(isolated, monkeypatch):
     assert MANIFEST.index("session") < MANIFEST.index("display")
     assert MANIFEST == [
         "config", "session", "providers", "tools",
-        "skills", "prompt", "display", "statusline", "commands", "readline",
+        "skills", "prompt", "display", "statusline", "usage", "commands", "readline",
     ]
 
     events = []
@@ -162,7 +176,7 @@ GROQ = '''
 class GroqClient:
     def __init__(self, cfg):
         self.cfg = cfg
-    def complete(self, system, messages, tools, on_text=None):
+    def complete(self, system, messages, tools, on_text=None, on_usage=None):
         return {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
 
 def scout(api):
