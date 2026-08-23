@@ -18,9 +18,13 @@ def _stream():
     return sys.stderr if _stderr else sys.stdout
 
 
-def scout(api) -> None:
+def _set_stderr(value: bool) -> None:
     global _stderr
-    _stderr = False
+    _stderr = value
+
+
+def scout(api) -> None:
+    _set_stderr(False)
 
     def tool_start(name, args, **_):
         print(f"[{name}] {str(args)[:120]}", file=_stream())
@@ -31,8 +35,7 @@ def scout(api) -> None:
         print(f"[{name}]{mark} {first}", file=_stream())
 
     def to_stderr(**_):
-        global _stderr
-        _stderr = True
+        _set_stderr(True)
 
     api.on("tool.start", tool_start)
     api.on("tool.end", tool_end)
