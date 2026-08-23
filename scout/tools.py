@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Callable
 
 MAX_OUTPUT = 30_000  # hard cap on any single tool result
+MAX_LINE = 2_000    # per-line cap: one minified line must not eat it all
+
+
+def clip_line(line: str, limit: int = MAX_LINE) -> str:
+    """Keep the start of one line; truncate() keeps head+tail of a blob,
+    which a single huge line defeats."""
+    if len(line) <= limit:
+        return line
+    return line[:limit] + f"… [+{len(line) - limit} chars]"
 
 
 def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
