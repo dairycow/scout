@@ -35,16 +35,22 @@ class Agent:
             message={"role": "user", "content": [{"type": "text", "text": user_text}]},
         )
         n = self.ctx.config["max_turns"]
+        last_usage = None
+
+        def on_usage(counts):
+            nonlocal last_usage
+            last_usage = counts
+
         for turn in range(n):
-            usage: list[dict] = []
+            last_usage = None
             message = self.client.complete(
                 self.system, self.session.messages, self.registry.schemas(), on_text,
-                on_usage=usage.append,
+                on_usage=on_usage,
             )
             self.bus.emit("message.assistant", message=message, turn=turn + 1)
-            if usage:
+            if last_usage is not None:
                 self.bus.emit(
-                    "usage", model=self.ctx.config.get("model", ""), **usage[0]
+                    "usage", model=self.ctx.config.get("model", ""), **last_usage
                 )
 
             calls = [b for b in message["content"] if b["type"] == "tool_use"]

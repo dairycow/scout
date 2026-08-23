@@ -67,12 +67,12 @@ def post_sse(url: str, headers: dict, payload: dict, timeout: int, retries: int 
                 started = True
                 yield event
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "replace")[:500]
             if not started and e.code in RETRYABLE and attempt < retries:
                 after = _retry_after(e)
                 time.sleep(after if after is not None else _backoff(attempt))
                 attempt += 1
                 continue
+            body = e.read().decode("utf-8", "replace")[:500]
             raise ScoutError(f"HTTP {e.code} from {url}: {body}") from e
         except urllib.error.URLError as e:
             if not started and attempt < retries:
